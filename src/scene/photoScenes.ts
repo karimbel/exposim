@@ -64,10 +64,9 @@ export const PHOTO_SCENES: PhotoScene[] = [
     levels: [1]
   },
   {
-    // Carte de profondeur provisoire (scène plein soleil) en attendant la sienne.
     id: 'feu',
     image: `${PHOTO_BASE}/feu.webp`,
-    depth: `${PHOTO_BASE}/soleil-profondeur.png`,
+    depth: `${PHOTO_BASE}/feu-profondeur.png`,
     subjectDisp: 0.21,
     subjectX: 0.33,
     subjectY: 0.56,
