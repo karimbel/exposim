@@ -37,7 +37,25 @@ export function dofRadius(z: number, aperture: number, focal: number, subjectZ: 
   return clamp(base, 0, 24);
 }
 
-/** Flou de bougé : sans trépied, il est clairement perceptible dès 1/500 s. */
+/**
+ * Longueur du flou de bougé à main levée, en pixels du viseur (1 050 px de
+ * large). Le tremblement de la main est un petit mouvement angulaire : sur
+ * l'image, il grandit avec la focale et avec la durée de pose. On retrouve
+ * la règle du « 1/focale » : à 1/focale s le flou reste sous le pixel, il se
+ * voit à deux fois plus lent et s'allonge ensuite avec la pose.
+ */
+export function shakeLengthPx(shutter: number, focal: number, tripod: boolean): number {
+  if (tripod) return 0;
+  return Math.min(1.1 * focal * shutter, 120);
+}
+
+/** Vitesse minimale conseillée à main levée (règle du 1/focale), arrondie au cran standard. */
+export function handheldMinShutter(focal: number): number {
+  const stops = [1 / 30, 1 / 60, 1 / 125, 1 / 250, 1 / 500];
+  return stops.find((t) => t <= 1 / focal) ?? stops[stops.length - 1];
+}
+
+/** @deprecated remplacé par `shakeLengthPx` (qui tient compte de la focale). */
 export function shakeAmount(shutter: number, tripod: boolean): number {
   if (tripod) return 0;
   const s = Math.max(shutter, 1 / 8000);
@@ -366,26 +384,32 @@ function addGrain(img: HTMLCanvasElement, iso: number): HTMLCanvasElement {
 }
 
 /** Flou de bougé (appareil tenu à main levée). */
-export function shakeBlur(img: HTMLCanvasElement, amount: number): HTMLCanvasElement {
+export function shakeBlur(img: HTMLCanvasElement, lengthPx: number): HTMLCanvasElement {
+  if (lengthPx < 0.8) return img;
+  // Trajet de l'appareil pendant la pose : presque droit pour une pose
+  // courte, de plus en plus courbe pour une pose longue (la main dérive).
+  const steps = clamp(Math.ceil(lengthPx * 1.2), 6, 96);
+  const theta0 = Math.random() * Math.PI * 2;
+  const curl = clamp((lengthPx - 12) / 60, 0, 1) * (Math.random() < 0.5 ? -1.8 : 1.8);
+  const wobble = clamp((lengthPx - 25) / 80, 0, 1) * 0.6;
+  const phase = Math.random() * Math.PI * 2;
+  const pts: Array<[number, number]> = [[0, 0]];
+  const seg = lengthPx / (steps - 1);
+  for (let i = 1; i < steps; i++) {
+    const u = i / (steps - 1);
+    const a = theta0 + curl * (u - 0.5) + wobble * Math.sin(u * Math.PI * 3 + phase);
+    const [px, py] = pts[i - 1];
+    // Le tremblement vertical est un peu plus faible que l'horizontal.
+    pts.push([px + Math.cos(a) * seg, py + Math.sin(a) * seg * 0.75]);
+  }
+  const cx = pts.reduce((s, p) => s + p[0], 0) / steps;
+  const cy = pts.reduce((s, p) => s + p[1], 0) / steps;
   const out = makeCanvas(img.width, img.height);
   const ctx = ctx2d(out);
-  // Échantillons rapprochés sur un seul axe : contrairement à quelques
-  // décalages aléatoires importants, cela donne un bougé continu sans
-  // produire de silhouettes fantômes reconnaissables.
-  const steps = 14 + Math.round(amount * 14);
-  const spread = 2 + amount * 14;
-  const angle = Math.random() * Math.PI * 2;
-  const dirX = Math.cos(angle);
-  const dirY = Math.sin(angle) * 0.72;
+  // Moyenne cumulée : chaque position pèse autant que les autres.
   for (let i = 0; i < steps; i++) {
-    const t = i / (steps - 1) - 0.5;
-    const dx = t * spread * dirX;
-    const dy = t * spread * dirY;
-    ctx.globalAlpha = 1 / steps;
-    ctx.save();
-    ctx.translate(dx, dy);
-    ctx.drawImage(img, 0, 0);
-    ctx.restore();
+    ctx.globalAlpha = 1 / (i + 1);
+    ctx.drawImage(img, pts[i][0] - cx, pts[i][1] - cy);
   }
   ctx.globalAlpha = 1;
   return out;
