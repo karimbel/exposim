@@ -170,8 +170,15 @@ export function renderDepthOfField(
         sampleLevels(levels, plain, r, p, base);
       } else {
         sampleLevels(levels, bg, r, p, base);
-        // Zone du fond entièrement cachée par le sujet : repli sur l'image complète.
-        if (base[3] < 24) sampleLevels(levels, plain, r, p, base);
+        // Près du sujet, le fond seul est peu représenté : on passe en douceur
+        // vers l'image complète (pas de trait à la frontière).
+        const wBg = clamp((base[3] - 16) / 160, 0, 1);
+        if (wBg < 1) {
+          sampleLevels(levels, plain, r, p, front);
+          base[0] = front[0] + (base[0] - front[0]) * wBg;
+          base[1] = front[1] + (base[1] - front[1]) * wBg;
+          base[2] = front[2] + (base[2] - front[2]) * wBg;
+        }
       }
       // Débord progressif d'un premier plan flou sur ce qui est derrière lui.
       if (nearSpread && !isNear) {
