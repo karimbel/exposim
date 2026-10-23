@@ -514,10 +514,10 @@ html, body {
   border: 1px solid #fff;
   border-radius: 5px;
   padding: 5px 0 4px;
-  /* Largeur fixe (calée sur « ISO 12800 ») : les cadres ne bougent pas
+  /* Largeur fixe (calée sur « ISO 6400 ») : les cadres ne bougent pas
      quand les valeurs changent. */
   box-sizing: border-box;
-  width: 6.6em;
+  width: 5.9em;
   text-align: center;
 }
 
