@@ -49,7 +49,7 @@ const COPY = {
     lens: 'Objectif', distance: 'Distance au sujet', focal: 'Focale (zoom)',
     series: 'Série', tripod: 'Trépied (stabilise l’image)', highlights: 'Alerte hautes lumières', thirds: 'Grille des tiers', compare: 'Comparer avec une autre photo', capture: 'Déclencher', shortcut: 'ou appuyer sur Espace',
     save: 'Exporter l’image (PNG)', gallery: 'Photos prises', galleryHint: 'cliquez pour agrandir · ⇄ comparer deux photos · ⇩ exporter · ✕ supprimer',
-    empty: 'Aucune photo pour le moment.', backLive: 'Revenir au direct',
+    empty: 'Aucune photo pour le moment.',
     bokeh: 'Effet bokeh marqué', depth: 'Profondeur de champ', motionBlur: 'Flou de filé possible', frozen: 'Mouvement figé',
     sharpRange: (a: string, b: string) => `Net de ${a} à ${b}`, sharpToInf: (a: string) => `Net de ${a} à l’infini`,
     spinFrozen: 'Moulinet figé', spinSlight: 'Moulinet : léger filé', spinStrong: 'Moulinet : filé marqué', spinDisc: 'Moulinet : disque flou',
@@ -69,7 +69,7 @@ const COPY = {
     lens: 'Lens', distance: 'Subject distance', focal: 'Focal length (zoom)',
     series: 'Series', tripod: 'Tripod (stabilizes the image)', highlights: 'Highlight alert', thirds: 'Rule-of-thirds grid', compare: 'Compare with another photo', capture: 'Capture', shortcut: 'or press Space',
     save: 'Export image (PNG)', gallery: 'Captured photos', galleryHint: 'click to enlarge · ⇄ compare two photos · ⇩ export · ✕ delete',
-    empty: 'No photos yet.', backLive: 'Return to live view',
+    empty: 'No photos yet.',
     bokeh: 'Strong bokeh effect', depth: 'Depth of field', motionBlur: 'Motion blur possible', frozen: 'Motion frozen',
     sharpRange: (a: string, b: string) => `Sharp from ${a} to ${b}`, sharpToInf: (a: string) => `Sharp from ${a} to infinity`,
     spinFrozen: 'Pinwheel frozen', spinSlight: 'Pinwheel: slight blur', spinStrong: 'Pinwheel: strong blur', spinDisc: 'Pinwheel: blurred disc',
@@ -779,15 +779,7 @@ export function buildApp(root: HTMLElement, language: Language): void {
   const vfSideRight = el('div', 'vf-side vf-side--right', '');
   const vfBottom = el('div', 'vf-bottom');
   vfBottom.append(vfSpeed, vfAperture, meter, vfSideRight);
-  const liveBtn = el('button', 'btn viewfinder__live', copy.backLive);
-  liveBtn.type = 'button';
-  liveBtn.addEventListener('click', () => {
-    selectedShot = null;
-    simulateLiveDraw(performance.now());
-    refreshGallery();
-    syncAll();
-  });
-  viewfinder.append(view, vfOverlay, vfHistogram, vfBottom, liveBtn);
+  viewfinder.append(view, vfOverlay, vfHistogram, vfBottom);
   stage.append(viewfinder);
   main.append(stage);
 
@@ -954,6 +946,9 @@ export function buildApp(root: HTMLElement, language: Language): void {
   /** Photos cochées pour la comparaison (deux au plus). */
   const compareSel: Shot[] = [];
   let freezeUntil = 0;
+  /** Fin de la relecture de la photo prise (comme sur un appareil : ~2 s). */
+  let reviewUntil = 0;
+  const REVIEW_MS = 2000;
   let lastHistogramAt = 0;
 
   function drawHistogram(c: HTMLCanvasElement): void {
@@ -1082,9 +1077,14 @@ export function buildApp(root: HTMLElement, language: Language): void {
 
   function paint(elapsed: number): void {
     if (selectedShot) {
-      // Photo affichée : on la redessine pour faire clignoter l'alerte.
-      if (hiCheck.checked) drawCanvas(selectedShot.canvas);
-      return;
+      if (elapsed < reviewUntil) {
+        // Relecture : on redessine la photo pour faire clignoter l'alerte.
+        if (hiCheck.checked) drawCanvas(selectedShot.canvas);
+        return;
+      }
+      // Fin de la relecture : retour automatique au direct.
+      selectedShot = null;
+      refreshGallery();
     }
     if (elapsed < freezeUntil) return;
     simulateLiveDraw(elapsed);
@@ -1170,13 +1170,7 @@ export function buildApp(root: HTMLElement, language: Language): void {
       const pic = el('div', 'shot__pic');
       pic.append(thumb, meta, cmp, save, del);
       card.append(pic, settings);
-      card.addEventListener('click', () => {
-        selectedShot = shot;
-        drawCanvas(shot.canvas);
-        refreshGallery();
-        syncAll();
-        openLightbox(shot);
-      });
+      card.addEventListener('click', () => openLightbox(shot));
       galleryStrip.append(card);
     }
   }
@@ -1324,7 +1318,6 @@ export function buildApp(root: HTMLElement, language: Language): void {
     syncLog();
     syncKelvinMood();
     syncSceneSliders();
-    liveBtn.classList.toggle('is-visible', selectedShot !== null);
   }
   const pokeUI = syncAll;
 
@@ -1369,12 +1362,12 @@ export function buildApp(root: HTMLElement, language: Language): void {
     shots.push(shot);
     journal('photo', { ...snapshot(), legende: shot.label });
     selectedShot = shot;
+    reviewUntil = elapsed + REVIEW_MS;
     refreshGallery();
     syncAll();
   }
   shutterBtn.addEventListener('click', () => releaseShutter(performance.now()));
   viewfinder.addEventListener('click', (ev) => {
-    if (ev.target === liveBtn) return;
     if (!selectedShot) {
       const rect = view.getBoundingClientRect();
       const x = (ev.clientX - rect.left) / rect.width;
@@ -1383,9 +1376,9 @@ export function buildApp(root: HTMLElement, language: Language): void {
       journal('mise-au-point', { x: +x.toFixed(3), y: +y.toFixed(3), distanceVisee: +sim.depthAt(x, y).toFixed(2) });
       return;
     }
-    selectedShot = null;
-    refreshGallery();
-    syncAll();
+    // Clic pendant la relecture : retour immédiat au direct.
+    reviewUntil = 0;
+    freezeUntil = 0;
   });
 
   document.addEventListener('keydown', (ev) => {
@@ -1432,6 +1425,9 @@ export function buildApp(root: HTMLElement, language: Language): void {
     // Le rendu complet est recalculé au prochain tick de la boucle : glisser
     // un curseur ne déclenche pas un rendu par événement.
     sim.clearStaticCache();
+    // Un réglage touché pendant la relecture ramène aussitôt le direct.
+    reviewUntil = 0;
+    freezeUntil = 0;
     syncAll();
     journalReglage();
   });

@@ -553,22 +553,6 @@ html, body {
 .viewfinder__flash {
   animation: vf-flash 0.09s ease-out;
 }
-
-.viewfinder__live {
-  display: none;
-  position: absolute;
-  top: 14px;
-  right: 14px;
-  padding: 7px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.72);
-  border-radius: 6px;
-  background: rgba(6, 10, 16, 0.78);
-  color: #fff;
-  font-size: 12px;
-  cursor: pointer;
-}
-.viewfinder__live.is-visible { display: block; }
-.viewfinder__live:hover { border-color: var(--accent); color: var(--accent); }
 @keyframes vf-flash {
   from { filter: brightness(2.4); }
   to { filter: brightness(1); }
@@ -1041,5 +1025,4 @@ input[type="range"]::-moz-range-thumb {
   .vf-side { padding: 3px 6px; font-size: 11px; }
   .vf-histogram { top: 20px; right: 16px; width: 96px; height: 33px; }
   .meter__scale { gap: 4px; transform: scale(0.8); }
-  .viewfinder__live { top: 8px; right: 8px; padding: 5px 7px; font-size: 10px; }
 }
