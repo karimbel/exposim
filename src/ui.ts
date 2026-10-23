@@ -48,7 +48,7 @@ const COPY = {
     scene: 'Lumière de la scène', light: 'Luminosité', temperature: 'Balance des blancs',
     lens: 'Objectif', distance: 'Distance au sujet', focal: 'Focale (zoom)',
     series: 'Série', tripod: 'Trépied (stabilise l’image)', highlights: 'Alerte hautes lumières', thirds: 'Grille des tiers', compare: 'Comparer avec une autre photo', capture: 'Déclencher', shortcut: 'ou appuyer sur Espace',
-    save: 'Sauvegarder l’image', gallery: 'Photos prises', galleryHint: 'cliquez pour agrandir · ⇄ pour comparer deux photos · ✕ pour supprimer',
+    save: 'Exporter l’image (PNG)', gallery: 'Photos prises', galleryHint: 'cliquez pour agrandir · ⇄ comparer deux photos · ⇩ exporter · ✕ supprimer',
     empty: 'Aucune photo pour le moment.', backLive: 'Revenir au direct',
     bokeh: 'Effet bokeh marqué', depth: 'Profondeur de champ', motionBlur: 'Flou de filé possible', frozen: 'Mouvement figé',
     sharpRange: (a: string, b: string) => `Net de ${a} à ${b}`, sharpToInf: (a: string) => `Net de ${a} à l’infini`,
@@ -68,7 +68,7 @@ const COPY = {
     scene: 'Scene light', light: 'Brightness', temperature: 'White balance',
     lens: 'Lens', distance: 'Subject distance', focal: 'Focal length (zoom)',
     series: 'Series', tripod: 'Tripod (stabilizes the image)', highlights: 'Highlight alert', thirds: 'Rule-of-thirds grid', compare: 'Compare with another photo', capture: 'Capture', shortcut: 'or press Space',
-    save: 'Save image', gallery: 'Captured photos', galleryHint: 'click to enlarge · ⇄ to compare two photos · ✕ to delete',
+    save: 'Export image (PNG)', gallery: 'Captured photos', galleryHint: 'click to enlarge · ⇄ compare two photos · ⇩ export · ✕ delete',
     empty: 'No photos yet.', backLive: 'Return to live view',
     bokeh: 'Strong bokeh effect', depth: 'Depth of field', motionBlur: 'Motion blur possible', frozen: 'Motion frozen',
     sharpRange: (a: string, b: string) => `Sharp from ${a} to ${b}`, sharpToInf: (a: string) => `Sharp from ${a} to infinity`,
@@ -817,8 +817,9 @@ export function buildApp(root: HTMLElement, language: Language): void {
   const galleryStrip = el('div', 'gallery__strip');
   galleryStrip.append(el('div', 'gallery__empty', copy.empty));
 
-  const recap = el('div', 'recap', '');
-  gallery.append(galleryHead, galleryStrip, recap);
+  const galleryMain = el('div', 'gallery__main');
+  galleryMain.append(galleryHead, galleryStrip);
+  gallery.append(galleryMain);
   main.append(gallery);
 
   /* -------------------------------- panneau ------------------------------- */
@@ -909,18 +910,9 @@ export function buildApp(root: HTMLElement, language: Language): void {
   const captureText = el('div', 'panel__action-copy');
   captureText.append(el('strong', undefined, copy.capture), el('span', undefined, copy.shortcut));
   captureAction.append(captureText, shutterBtn);
-  panel.append(captureAction);
-
-  const saveBtn = el('button', 'btn btn--save');
-  saveBtn.type = 'button';
-  saveBtn.disabled = true;
-  const saveIcon = el('span', 'save__icon', '⇩');
-  saveIcon.setAttribute('aria-hidden', 'true');
-  const saveText = el('span', 'save__text', copy.save);
-  const saveBadge = el('span', 'save__badge', 'PNG');
-  saveBadge.title = 'Image PNG haute qualité';
-  saveBtn.append(saveIcon, saveText, saveBadge);
-  panel.append(saveBtn);
+  // Le déclencheur est à droite de la galerie : on prend la photo là où elle
+  // vient se ranger.
+  gallery.append(captureAction);
 
   main.append(panel);
   root.append(main);
@@ -1150,6 +1142,14 @@ export function buildApp(root: HTMLElement, language: Language): void {
         refreshGallery();
         if (compareSel.length === 2) openCompare(compareSel[0], compareSel[1]);
       });
+      const save = el('button', 'shot__save', '⇩');
+      save.type = 'button';
+      save.title = copy.save;
+      save.setAttribute('aria-label', copy.save);
+      save.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        exportShot(shot);
+      });
       const del = el('button', 'shot__del', '✕');
       del.type = 'button';
       del.title = language === 'fr' ? 'Supprimer' : 'Delete';
@@ -1167,7 +1167,7 @@ export function buildApp(root: HTMLElement, language: Language): void {
         syncAll();
       });
       const pic = el('div', 'shot__pic');
-      pic.append(thumb, meta, cmp, del);
+      pic.append(thumb, meta, cmp, save, del);
       card.append(pic, settings);
       card.addEventListener('click', () => {
         selectedShot = shot;
@@ -1180,15 +1180,14 @@ export function buildApp(root: HTMLElement, language: Language): void {
     }
   }
 
-  function selectFromRecap(): void {
-    recap.textContent = '';
-    if (selectedShot) {
-      recap.textContent = selectedShot.label;
-    }
-    saveBtn.disabled = !(selectedShot || sim.lastShot);
-    // Une étiquette de taille fixe évite de modifier la hauteur du panneau à
-    // la prise de vue, et donc de faire apparaître une barre de défilement.
-    saveText.textContent = copy.save;
+  /** Export PNG d'une photo, nommé d'après ses réglages. */
+  function exportShot(shot: Shot): void {
+    const s = shot.short.join('-').replace(/[^a-zA-Z0-9.]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+    const a = document.createElement('a');
+    a.download = `exposim-${shots.indexOf(shot) + 1}-${s}.png`;
+    a.href = shot.canvas.toDataURL('image/png');
+    a.click();
+    journal('export', { photo: shot.label });
   }
 
   /* ------------------------------ diagnostic ------------------------------ */
@@ -1324,7 +1323,6 @@ export function buildApp(root: HTMLElement, language: Language): void {
     syncLog();
     syncKelvinMood();
     syncSceneSliders();
-    selectFromRecap();
     liveBtn.classList.toggle('is-visible', selectedShot !== null);
   }
   const pokeUI = syncAll;
@@ -1418,14 +1416,6 @@ export function buildApp(root: HTMLElement, language: Language): void {
     }, 100);
   }
 
-  saveBtn.addEventListener('click', () => {
-    const src = selectedShot?.canvas ?? sim.lastShot;
-    if (!src) return;
-    const a = document.createElement('a');
-    a.download = `exposim-${Date.now()}.png`;
-    a.href = src.toDataURL('image/png');
-    a.click();
-  });
 
   /* ----------------------------- boucle live ------------------------------ */
   let last = 0;
