@@ -32,6 +32,7 @@ import {
 import { makeCanvas } from './scene/objects';
 import { renderScene } from './scene/world';
 import { journal } from './debug/journal';
+import { lightIconSvg } from './lightIcons';
 import { REF_FOCAL_MM } from './scene/sceneConfig';
 
 // Plein format 24 × 36 mm : ratio 3:2.
@@ -1059,7 +1060,7 @@ export function buildApp(root: HTMLElement, language: Language): void {
     const level = kelvinLevel(sim.settings.temperatureK);
     const stop = kelvinStop(level);
     const label = language === 'en' ? stop.labelEn : stop.label;
-    kelvinMoodIcon.innerHTML = `<img src="${import.meta.env.BASE_URL}kelvin/${level}.png" alt="" />`;
+    kelvinMoodIcon.innerHTML = lightIconSvg(level);
     kelvinMoodLabel.textContent = label;
     kelvinMood.classList.toggle('is-empty', !stop.icon && !label);
   }
