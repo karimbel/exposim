@@ -72,13 +72,13 @@ export const SHUTTER_STOPS: number[] = [
  */
 export const LIGHT_LEVELS: Record<number, { ev: number; fr: string; en: string }> = {
   1: { ev: -2, fr: 'Pleine lune', en: 'Full moon' },
-  2: { ev: 2, fr: 'Crépuscule profond', en: 'Deep twilight' },
-  3: { ev: 4, fr: 'Feu de camp, bougie', en: 'Campfire, candlelight' },
-  4: { ev: 6, fr: 'Intérieur le soir', en: 'Indoors at night' },
-  5: { ev: 8, fr: 'Intérieur lumineux', en: 'Bright interior' },
-  6: { ev: 11, fr: 'Coucher de soleil', en: 'Sunset' },
-  7: { ev: 12, fr: 'Ciel très couvert', en: 'Heavy overcast' },
-  8: { ev: 14, fr: 'Soleil voilé', en: 'Hazy sun' },
+  2: { ev: 3, fr: 'Feu de camp', en: 'Campfire' },
+  3: { ev: 5, fr: 'Crépuscule', en: 'Dusk' },
+  4: { ev: 8, fr: 'Soleil couché', en: 'After sunset' },
+  5: { ev: 10, fr: 'Couchant', en: 'Sunset' },
+  6: { ev: 12, fr: 'Très couvert', en: 'Heavy cloud' },
+  7: { ev: 13, fr: 'Couvert', en: 'Overcast' },
+  8: { ev: 14, fr: 'Voilé', en: 'Hazy' },
   9: { ev: 15, fr: 'Plein soleil', en: 'Full sun' }
 };
 

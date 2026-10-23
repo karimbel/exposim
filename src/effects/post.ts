@@ -17,8 +17,10 @@ export interface PostParams {
   /** ratio d'exposition (1 = correct, 2 = +1 IL, 0,5 = −1 IL) */
   exposure: number;
   iso: number;
-  /** Température de couleur de la lumière (K) ; la balance des blancs reste fixe à 5 500 K. */
+  /** Température de couleur choisie (K). */
   temperatureK: number;
+  /** Température d'origine de l'image (K) : à cette valeur, les couleurs restent inchangées. */
+  referenceK?: number;
   /** 0..1 flou de bougé (sans trépied) */
   shakeAmount: number;
   /** 0..1 filé du sujet */
@@ -307,10 +309,14 @@ export function whiteBalanceGains(kelvin: number): [number, number, number] {
  * et ce qui dépasse le blanc est écrêté (hautes lumières brûlées), comme sur
  * un capteur réel. À 0 IL et 5 500 K, l'image est quasiment inchangée.
  */
-function applyExposure(img: HTMLCanvasElement, exposure: number, temperatureK: number): HTMLCanvasElement {
+function applyExposure(img: HTMLCanvasElement, exposure: number, temperatureK: number, referenceK = CAMERA_WHITE_BALANCE_K): HTMLCanvasElement {
   const stops = clamp(Math.log2(Math.max(exposure, 1e-6)), -6, 6);
   const gain = Math.pow(2, stops);
-  const wb = whiteBalanceGains(temperatureK);
+  // Teinte relative à la lumière d'origine de l'image : une scène déjà
+  // orangée (coucher de soleil) ne le devient pas une seconde fois.
+  const target = whiteBalanceGains(temperatureK);
+  const ref = whiteBalanceGains(referenceK);
+  const wb = target.map((g, i) => g / ref[i]);
   const luts = wb.map((channelGain) => {
     const lut = new Uint8ClampedArray(256);
     for (let v = 0; v < 256; v++) lut[v] = linearToSrgb8(SRGB_TO_LINEAR[v] * gain * channelGain);
@@ -333,8 +339,8 @@ function applyExposure(img: HTMLCanvasElement, exposure: number, temperatureK: n
 }
 
 /** Exposition et couleur seules, pour un calque superposé au viseur (élément animé). */
-export function exposeLayer(img: HTMLCanvasElement, exposure: number, temperatureK: number): HTMLCanvasElement {
-  return applyExposure(img, exposure, temperatureK);
+export function exposeLayer(img: HTMLCanvasElement, exposure: number, temperatureK: number, referenceK?: number): HTMLCanvasElement {
+  return applyExposure(img, exposure, temperatureK, referenceK);
 }
 
 function addGrain(img: HTMLCanvasElement, iso: number): HTMLCanvasElement {
@@ -407,7 +413,7 @@ function vignette(img: HTMLCanvasElement, exposure: number): HTMLCanvasElement {
 
 /** Pipeline complet : exposition -> grain -> bougé -> vignettage. */
 export function postProcess(img: HTMLCanvasElement, p: PostParams): HTMLCanvasElement {
-  let out = applyExposure(img, p.exposure, p.temperatureK);
+  let out = applyExposure(img, p.exposure, p.temperatureK, p.referenceK);
   out = addGrain(out, p.iso);
   if (p.shakeAmount > 0.02) out = shakeBlur(out, p.shakeAmount);
   out = vignette(out, p.exposure);

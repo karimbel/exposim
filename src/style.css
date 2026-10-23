@@ -767,15 +767,13 @@ html, body {
 }
 .kelvin-mood.is-empty { display: none; }
 .kelvin-mood__icon {
-  font-size: 26px;
   line-height: 1;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35));
+  color: var(--amber);
 }
-.kelvin-mood__icon img {
+.kelvin-mood__icon svg {
   display: block;
-  width: 34px;
-  height: 34px;
-  object-fit: contain;
+  width: 30px;
+  height: 30px;
 }
 .kelvin-mood__label { font-size: 13px; font-weight: 650; }
 

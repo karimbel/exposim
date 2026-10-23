@@ -32,6 +32,7 @@ import {
 import { makeCanvas } from './scene/objects';
 import { renderScene } from './scene/world';
 import { journal } from './debug/journal';
+import { lightIconSvg } from './lightIcons';
 import { REF_FOCAL_MM } from './scene/sceneConfig';
 
 // Plein format 24 × 36 mm : ratio 3:2.
@@ -43,7 +44,7 @@ export type Language = 'fr' | 'en';
 const COPY = {
   fr: {
     tagline: 'Simulateur photographique — la scène, notre image.',
-    scene: 'Lumière de la scène', light: 'Luminosité', temperature: 'Température de couleur',
+    scene: 'Lumière de la scène', light: 'Luminosité', temperature: 'Balance des blancs',
     lens: 'Objectif', distance: 'Distance au sujet', focal: 'Focale (zoom)',
     series: 'Série', tripod: 'Trépied (stabilise l’image)', capture: 'Déclencher', shortcut: 'ou appuyer sur Espace',
     save: 'Sauvegarder l’image', gallery: 'Photos prises', galleryHint: 'cliquez pour agrandir · ✕ pour supprimer',
@@ -57,7 +58,7 @@ const COPY = {
   },
   en: {
     tagline: 'Photography simulator — the scene, our image.',
-    scene: 'Scene light', light: 'Brightness', temperature: 'Colour temperature',
+    scene: 'Scene light', light: 'Brightness', temperature: 'White balance',
     lens: 'Lens', distance: 'Subject distance', focal: 'Focal length (zoom)',
     series: 'Series', tripod: 'Tripod (stabilizes the image)', capture: 'Capture', shortcut: 'or press Space',
     save: 'Save image', gallery: 'Captured photos', galleryHint: 'click to enlarge · ✕ to delete',
@@ -107,6 +108,9 @@ export class Simulator {
   setLighting(v: number): void {
     // La luminosité ne modifie que l'IL de la scène, jamais sa couleur.
     this.settings.lighting = clamp(Math.round(v), 1, 9);
+    // La température se cale sur la lumière de la scène, comme référence ;
+    // l'utilisateur peut ensuite la modifier.
+    this.settings.temperatureK = sceneForLevel(this.settings.lighting).nativeK;
     this.applyAuto();
     this.emitChange();
   }
@@ -294,7 +298,8 @@ export class Simulator {
     const t0 = performance.now();
     const sharp = renderDepthOfField(f.plate, f.disp, focusDisp, s.aperture, s.focalLength);
     const exposure = exposureRatio(s.aperture, s.shutter, s.iso, s.lighting);
-    const image = postProcess(sharp, { exposure, iso: s.iso, temperatureK: s.temperatureK, shakeAmount: 0, motionAmount: motion });
+    const referenceK = this.scene().nativeK;
+    const image = postProcess(sharp, { exposure, iso: s.iso, temperatureK: s.temperatureK, referenceK, shakeAmount: 0, motionAmount: motion });
     let spinner: HTMLCanvasElement | null = null;
     const sp = this.scene().spinner;
     if (sp && f.spinner) {
@@ -308,7 +313,7 @@ export class Simulator {
         c.filter = `blur(${(r * 0.62).toFixed(2)}px)`;
         c.drawImage(f.spinner, 0, 0);
       }
-      spinner = exposeLayer(src, exposure, s.temperatureK);
+      spinner = exposeLayer(src, exposure, s.temperatureK, referenceK);
     }
     this.lastRenderMs = Math.round(performance.now() - t0);
     return { image, spinner };
@@ -724,26 +729,25 @@ export function buildApp(root: HTMLElement, language: Language): void {
     label: copy.light,
     fmt: (v) => {
       const level = Math.round(clamp(v, 1, 9));
-      return `${lightLabels[level]} · IL ${LIGHT_LEVELS[level].ev}`;
+      return `${lightLabels[level]} · ${language === 'fr' ? 'IL' : 'EV'} ${LIGHT_LEVELS[level].ev}`;
     },
     min: cfg.lightingRange.min, max: cfg.lightingRange.max, step: cfg.lightingRange.step,
     get: () => sim.settings.lighting,
     set: (v) => sim.setLighting(v),
     isActive: () => true
   });
-  const tempSlider = buildSlider({
-    label: copy.temperature,
-    fmt: (v) => `${kelvinStop(v).kelvin.toLocaleString(language === 'fr' ? 'fr-FR' : 'en-US')} K`,
-    min: 1, max: 9, step: 1,
-    get: () => kelvinLevel(sim.settings.temperatureK),
-    set: (v) => sim.setTemperatureK(kelvinStop(v).kelvin),
-    isActive: () => true
-  });
+  // Balance des blancs : valeur fixe, celle de la lumière de la scène
+  // (affichée comme repère, non modifiable).
+  const wbRow = el('div', 'control control--readonly');
+  const wbHead = el('div', 'control__head');
+  const wbValue = el('span', 'control__value', '');
+  wbHead.append(el('span', 'control__label', copy.temperature), wbValue);
+  wbRow.append(wbHead);
   const kelvinMood = el('div', 'kelvin-mood');
   const kelvinMoodIcon = el('span', 'kelvin-mood__icon');
   const kelvinMoodLabel = el('span', 'kelvin-mood__label');
   kelvinMood.append(kelvinMoodIcon, kelvinMoodLabel);
-  sceneSec.append(lightSlider.wrap, tempSlider.wrap, kelvinMood);
+  sceneSec.append(lightSlider.wrap, wbRow, kelvinMood);
   panel.append(sceneSec);
 
   const lensSec = el('div', 'panel__section');
@@ -1048,11 +1052,15 @@ export function buildApp(root: HTMLElement, language: Language): void {
       log.textContent = hints[s.mode];
     }
   }
+  function syncSceneSliders(): void {
+    // La température peut changer avec la luminosité : le curseur suit.
+    wbValue.textContent = `${sim.settings.temperatureK.toLocaleString(language === 'fr' ? 'fr-FR' : 'en-US')} K`;
+  }
   function syncKelvinMood(): void {
     const level = kelvinLevel(sim.settings.temperatureK);
     const stop = kelvinStop(level);
     const label = language === 'en' ? stop.labelEn : stop.label;
-    kelvinMoodIcon.innerHTML = `<img src="${import.meta.env.BASE_URL}kelvin/${level}.png" alt="" />`;
+    kelvinMoodIcon.innerHTML = lightIconSvg(level);
     kelvinMoodLabel.textContent = label;
     kelvinMood.classList.toggle('is-empty', !stop.icon && !label);
   }
@@ -1064,6 +1072,7 @@ export function buildApp(root: HTMLElement, language: Language): void {
     syncMeter();
     syncLog();
     syncKelvinMood();
+    syncSceneSliders();
     selectFromRecap();
     liveBtn.classList.toggle('is-visible', selectedShot !== null);
   }
