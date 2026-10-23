@@ -21,12 +21,20 @@ L'objectif n'est pas de reproduire l'interface d'un appareil existant, mais de p
 - La mise au point par clic directement dans le viseur
 - La focale, la distance et leur influence sur le cadrage
 - Le filé du sujet, le bougé à main levée et l'effet stabilisateur du trépied
-- Le grain, la température de couleur et l'exposition de la scène
-- La prise, la consultation et l'export des photographies créées
+- L'eau qui devient laiteuse et les flammes du feu de camp qui se fondent en voile en pose lente
+- Le grain, la balance des blancs et cinq ambiances lumineuses, de la pleine lune au plein soleil
+- L'alerte de hautes lumières : les zones brûlées clignotent dans le viseur et sur les photos
+- La grille des tiers pour composer l'image
+- La prise, la consultation et l'export des photos, avec leurs réglages et la comparaison de deux photos côte à côte
 
 ### Une scène qui peut évoluer
 
-Le décor, le sujet et l'élément animé sont constitués d'images indépendantes. Cette architecture permet de remplacer facilement l'univers visuel d'ExpoSim et de créer de nouveaux exercices ou situations photographiques.
+Chaque ambiance repose sur une photo, sa carte de profondeur (qui pilote le flou), un masque d'eau et un élément animé. Cette architecture permet de remplacer facilement l'univers visuel d'ExpoSim et de créer de nouveaux exercices ou situations photographiques.
+
+### Feuille de route
+
+- [ ] Compensation d'exposition (±3 IL) en modes P, Av et Tv
+- [ ] Défis : reproduire une photo cible avec les bons réglages
 
 ---
 
@@ -46,12 +54,20 @@ The goal is not to replicate a specific camera interface, but to offer a clear, 
 - Click-to-focus directly in the viewfinder
 - Focal length, distance, and their effect on framing
 - Subject motion blur, handheld camera shake, and tripod stabilisation
-- Grain, colour temperature, and scene exposure
-- Capturing, reviewing, and exporting the photographs you create
+- Water turning silky and campfire flames melting into a glowing veil with long exposures
+- Grain, white balance, and five lighting moods, from full moon to full sun
+- Highlight alert: blown-out areas blink in the viewfinder and on your photos
+- A rule-of-thirds grid for composition
+- Capturing, reviewing, and exporting your photos, with their settings and side-by-side comparison of two shots
 
 ### An adaptable scene
 
-The background, subject, and animated element are independent image layers. This makes it easy to replace ExpoSim's visual world and create new photographic scenarios or learning exercises.
+Each lighting mood is built from a photo, its depth map (which drives the blur), a water mask, and an animated element. This makes it easy to replace ExpoSim's visual world and create new photographic scenarios or learning exercises.
+
+### Roadmap
+
+- [ ] Exposure compensation (±3 EV) in P, Av, and Tv modes
+- [ ] Challenges: match a target photo with the right settings
 
 ---
 
@@ -64,3 +80,15 @@ This project is released under the [Creative Commons Attribution–NonCommercial
 ExpoSim est un projet indépendant, inspiré du principe pédagogique des simulateurs photographiques. Il ne réutilise ni le code ni les images de CameraSim.
 
 ExpoSim is an independent project inspired by the educational principle of photography simulators. It does not reuse CameraSim code or imagery.
+
+---
+
+## Développement / Development
+
+```bash
+npm install
+npm run dev      # serveur local / local server
+npm run build    # site statique dans dist/ / static site in dist/
+```
+
+Le site est publié sur GitHub Pages à chaque envoi sur `main`. / The site is deployed to GitHub Pages on every push to `main`.

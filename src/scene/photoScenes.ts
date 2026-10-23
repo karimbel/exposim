@@ -34,18 +34,31 @@ export interface Spinner {
   realSpin: number;
 }
 
+/** Feu de camp détouré (bûches + flammes), animé par `effects/fire.ts`. */
+export interface Fire {
+  file: string;
+  /** Coin haut gauche et taille du sprite (fractions de l'image). */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface PhotoScene {
   id: string;
   /** Image nette partout (l'objet animé en est retiré s'il y en a un). */
   image: string;
   /** Carte de profondeur alignée pixel pour pixel. */
   depth: string;
+  /** Masque du lac (blanc = eau) : lissé en pose longue. */
+  water?: string;
   /** Disparité du sujet (m⁻¹) : mise au point par défaut. */
   subjectDisp: number;
   /** Centre du sujet (fractions de l'image) : le zoom le garde dans le cadre. */
   subjectX: number;
   subjectY: number;
   spinner?: Spinner;
+  fire?: Fire;
   /** Température de couleur d'origine (K) : réglage proposé avec cette lumière. */
   nativeK: number;
   /** Niveaux de lumière (1 .. 9) qui utilisent cette scène. */
@@ -57,6 +70,7 @@ export const PHOTO_SCENES: PhotoScene[] = [
     id: 'lune',
     image: `${PHOTO_BASE}/lune.webp`,
     depth: `${PHOTO_BASE}/lune-profondeur.png`,
+    water: `${PHOTO_BASE}/lune-lac.png`,
     subjectDisp: 0.21,
     subjectX: 0.33,
     subjectY: 0.56,
@@ -67,9 +81,11 @@ export const PHOTO_SCENES: PhotoScene[] = [
     id: 'feu',
     image: `${PHOTO_BASE}/feu.webp`,
     depth: `${PHOTO_BASE}/feu-profondeur.png`,
+    water: `${PHOTO_BASE}/feu-lac.png`,
     subjectDisp: 0.21,
     subjectX: 0.33,
     subjectY: 0.56,
+    fire: { file: `${PHOTO_BASE}/feu-flammes.webp`, x: 703 / 1536, y: 560 / 1024, w: 262 / 1536, h: 315 / 1024 },
     nativeK: 2000,
     levels: [2, 3]
   },
@@ -77,6 +93,7 @@ export const PHOTO_SCENES: PhotoScene[] = [
     id: 'coucher',
     image: `${PHOTO_BASE}/coucher.webp`,
     depth: `${PHOTO_BASE}/coucher-profondeur.png`,
+    water: `${PHOTO_BASE}/coucher-lac.png`,
     subjectDisp: 0.21,
     subjectX: 0.33,
     subjectY: 0.56,
@@ -96,6 +113,7 @@ export const PHOTO_SCENES: PhotoScene[] = [
     id: 'couvert',
     image: `${PHOTO_BASE}/couvert.webp`,
     depth: `${PHOTO_BASE}/couvert-profondeur.png`,
+    water: `${PHOTO_BASE}/couvert-lac.png`,
     subjectDisp: 0.21,
     subjectX: 0.33,
     subjectY: 0.56,
@@ -115,6 +133,7 @@ export const PHOTO_SCENES: PhotoScene[] = [
     id: 'soleil',
     image: `${PHOTO_BASE}/soleil.webp`,
     depth: `${PHOTO_BASE}/soleil-profondeur.png`,
+    water: `${PHOTO_BASE}/soleil-lac.png`,
     subjectDisp: 0.21,
     subjectX: 0.33,
     subjectY: 0.56,
@@ -157,7 +176,7 @@ function load(src: string): Promise<void> {
 }
 
 export function loadPhotoScenes(): Promise<void> {
-  const files = PHOTO_SCENES.flatMap((s) => [s.image, s.depth, ...(s.spinner ? [s.spinner.file] : [])]);
+  const files = PHOTO_SCENES.flatMap((s) => [s.image, s.depth, ...(s.water ? [s.water] : []), ...(s.spinner ? [s.spinner.file] : []), ...(s.fire ? [s.fire.file] : [])]);
   return Promise.all(files.map(load)).then(() => undefined);
 }
 
@@ -199,6 +218,16 @@ export function drawCropped(img: CanvasImageSource & { width: number; height: nu
   c.imageSmoothingQuality = 'high';
   c.drawImage(img, crop.x * img.width, crop.y * img.height, crop.w * img.width, crop.h * img.height, 0, 0, w, h);
   return out;
+}
+
+/** Masque recadré : la luminance de l'image devient le canal alpha. */
+export function croppedMask(mask: HTMLImageElement, crop: Crop, w: number, h: number): HTMLCanvasElement {
+  const c = drawCropped(mask, crop, w, h);
+  const ctx = ctx2d(c);
+  const d = ctx.getImageData(0, 0, w, h);
+  for (let i = 0; i < d.data.length; i += 4) d.data[i + 3] = d.data[i];
+  ctx.putImageData(d, 0, 0);
+  return c;
 }
 
 /** Carte de disparité (m⁻¹) recadrée, à la résolution du viseur. */

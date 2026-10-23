@@ -1,17 +1,7 @@
 import { clamp, log2 } from '../camera/exposure';
 import { makeCanvas, ctx2d } from '../scene/objects';
-import type { SceneLayers, LayerDepth } from '../scene/world';
-import { LAYER_DEPTH } from '../scene/world';
 
 /* --------------------------- Effets & paramètres ------------------------ */
-
-export interface BlurRadii {
-  far: number;
-  mid: number;
-  nearBg: number;
-  subject: number;
-  fg: number;
-}
 
 export interface PostParams {
   /** ratio d'exposition (1 = correct, 2 = +1 IL, 0,5 = −1 IL) */
@@ -25,16 +15,6 @@ export interface PostParams {
   shakeAmount: number;
   /** 0..1 filé du sujet */
   motionAmount: number;
-}
-
-/** Rayon de bokeh (px) pour un élément situé à la profondeur z. */
-export function dofRadius(z: number, aperture: number, focal: number, subjectZ: number): number {
-  const dz = z - subjectZ;
-  if (Math.abs(dz) < 0.05) return 0;
-  // Compression douce du cercle de confusion : le viseur d'un hybride garde
-  // une lecture de scène, même lorsque le point est loin du sujet.
-  const base = 0.2 * (focal / aperture) * (Math.abs(dz) / z);
-  return clamp(base, 0, 24);
 }
 
 /**
@@ -55,211 +35,10 @@ export function handheldMinShutter(focal: number): number {
   return stops.find((t) => t <= 1 / focal) ?? stops[stops.length - 1];
 }
 
-/** @deprecated remplacé par `shakeLengthPx` (qui tient compte de la focale). */
-export function shakeAmount(shutter: number, tripod: boolean): number {
-  if (tripod) return 0;
-  const s = Math.max(shutter, 1 / 8000);
-  return clamp((log2(s) - log2(1 / 500) + 0.45) / 2.25, 0, 1);
-}
-
 /** Filé du sujet : perceptible seulement aux vitesses réellement lentes. */
 export function motionAmount(shutter: number): number {
   const s = Math.max(shutter, 1 / 8000);
   return clamp((log2(s) - log2(1 / 30)) / 5, 0, 1);
-}
-
-/** Calcule les rayons de flou pour chaque couche selon les réglages. */
-export function computeBlurRadii(layers: SceneLayers): BlurRadii {
-  const { aperture, focalLength, subjectZ, focusZ } = layers;
-  // Le moulin est tenu par la famille : il partage donc exactement son plan
-  // de netteté, quelle que soit la distance choisie dans le simulateur.
-  const depth: LayerDepth = { ...LAYER_DEPTH, mid: subjectZ, subject: subjectZ };
-  return {
-    far: dofRadius(depth.far, aperture, focalLength, focusZ),
-    mid: dofRadius(depth.mid, aperture, focalLength, focusZ),
-    nearBg: dofRadius(depth.nearBg, aperture, focalLength, focusZ),
-    subject: dofRadius(depth.subject, aperture, focalLength, focusZ),
-    fg: dofRadius(depth.fg, aperture, focalLength, focusZ)
-  };
-}
-
-/* ------------------------------- Composition ---------------------------- */
-
-function drawLayer(ctx: CanvasRenderingContext2D, layer: HTMLCanvasElement, blur: number): void {
-  if (blur > 0.5) {
-    ctx.drawImage(opaqueBlur(layer, blur), 0, 0);
-  } else {
-    ctx.drawImage(layer, 0, 0);
-  }
-}
-
-/**
- * Bokeh contenu dans le masque original : la diffusion reste visuelle, mais
- * l'élément conserve son alpha et ne devient jamais translucide sur le décor.
- */
-function opaqueBlur(layer: HTMLCanvasElement, blur: number): HTMLCanvasElement {
-  const out = makeCanvas(layer.width, layer.height);
-  applyBlur(ctx2d(out), layer, blur);
-  const ctx = ctx2d(out);
-  ctx.globalCompositeOperation = 'destination-in';
-  ctx.drawImage(layer, 0, 0);
-  ctx.globalCompositeOperation = 'source-over';
-  return out;
-}
-
-function applyBlur(ctx: CanvasRenderingContext2D, layer: HTMLCanvasElement, blur: number): void {
-  ctx.save();
-  // Approximation d'un cercle de confusion : contrairement au flou gaussien,
-  // chaque détail se diffuse dans un disque, plus proche d'un vrai bokeh.
-  const samples = clamp(Math.round(8 + blur * 1.3), 8, 28);
-  for (let i = 0; i < samples; i++) {
-    const radius = blur * Math.sqrt((i + 0.5) / samples);
-    const angle = i * 2.399963229728653; // angle d'or : répartition régulière
-    ctx.globalAlpha = 1 / samples;
-    ctx.drawImage(layer, Math.cos(angle) * radius, Math.sin(angle) * radius);
-  }
-  ctx.restore();
-}
-
-/**
- * Flou de profondeur progressif : la couche est rendue selon une rampe verticale
- * de flou (variant en douceur de `blurTop` vers `blurBottom`), la zone la plus
- * nette s'alignant sur la ligne de mise au point du sujet.
- */
-function drawDepthRamp(
-  ctx: CanvasRenderingContext2D,
-  layer: HTMLCanvasElement,
-  blurTop: number,
-  blurBottom: number,
-  focusY: number
-): void {
-  if (Math.max(blurTop, blurBottom) < 0.5) {
-    ctx.drawImage(layer, 0, 0);
-    return;
-  }
-  const w = layer.width;
-  const h = layer.height;
-
-  const topLayer = makeCanvas(w, h);
-  const topCtx = ctx2d(topLayer);
-  applyBlur(topCtx, layer, blurTop);
-
-  const botLayer = makeCanvas(w, h);
-  const botCtx = ctx2d(botLayer);
-  applyBlur(botCtx, layer, blurBottom);
-
-  // amorce la partie lointaine (plus floue)
-  ctx.drawImage(topLayer, 0, 0);
-  if (blurBottom < 0.5 && blurTop < 0.5) return;
-  if (Math.abs(blurTop - blurBottom) < 0.6) {
-    ctx.drawImage(botLayer, 0, 0);
-    return;
-  }
-
-  // bande de transition (partie proche, moins floue) centrée sur le sujet
-  const band = Math.max(60, h * 0.34);
-  const yMid = clamp(focusY, band * 0.5, h - band * 0.15);
-  const yTop = yMid - band * 0.55;
-  const yBot = yMid + band * 0.45;
-
-  const mask = makeCanvas(w, h);
-  const mctx = ctx2d(mask);
-  const g = mctx.createLinearGradient(0, yTop, 0, yBot);
-  g.addColorStop(0, 'rgba(255,255,255,0)');
-  g.addColorStop(1, 'rgba(255,255,255,1)');
-  mctx.fillStyle = g;
-  mctx.fillRect(0, 0, w, h);
-
-  const bottom = makeCanvas(w, h);
-  const bctx = ctx2d(bottom);
-  bctx.drawImage(botLayer, 0, 0);
-  bctx.globalCompositeOperation = 'destination-in';
-  bctx.drawImage(mask, 0, 0);
-
-  ctx.drawImage(bottom, 0, 0);
-}
-
-/** Bokeh de premier plan : démarre aux pieds du sujet et augmente vers le bas. */
-function drawGroundBokeh(ctx: CanvasRenderingContext2D, layer: HTMLCanvasElement, startY: number, blur: number): void {
-  if (blur < 0.5 || startY >= layer.height - 2) return;
-  const w = layer.width;
-  const h = layer.height;
-  const blurred = makeCanvas(w, h);
-  applyBlur(ctx2d(blurred), layer, blur);
-
-  const mask = makeCanvas(w, h);
-  const maskCtx = ctx2d(mask);
-  const gradient = maskCtx.createLinearGradient(0, startY, 0, h);
-  gradient.addColorStop(0, 'rgba(255,255,255,0)');
-  gradient.addColorStop(1, 'rgba(255,255,255,1)');
-  maskCtx.fillStyle = gradient;
-  maskCtx.fillRect(0, 0, w, h);
-
-  const overlay = makeCanvas(w, h);
-  const overlayCtx = ctx2d(overlay);
-  overlayCtx.drawImage(blurred, 0, 0);
-  overlayCtx.globalCompositeOperation = 'destination-in';
-  overlayCtx.drawImage(mask, 0, 0);
-  ctx.drawImage(overlay, 0, 0);
-}
-
-function drawSubject(
-  ctx: CanvasRenderingContext2D,
-  layer: HTMLCanvasElement,
-  blur: number,
-  motionAmount: number,
-  subjectPxPerM: number
-): void {
-  const prepared = makeCanvas(layer.width, layer.height);
-  const preparedCtx = ctx2d(prepared);
-  if (blur > 0.5) preparedCtx.drawImage(opaqueBlur(layer, blur), 0, 0);
-  else preparedCtx.drawImage(layer, 0, 0);
-  if (motionAmount < 0.03) {
-    ctx.drawImage(prepared, 0, 0);
-    return;
-  }
-  // Traînée discrète : elle ne doit jamais ajouter de lumière au sujet.
-  const ghosts = 3;
-  const travel = motionAmount * 0.18 * subjectPxPerM;
-  ctx.save();
-  ctx.globalCompositeOperation = 'source-over';
-  for (let i = 1; i <= ghosts; i++) {
-    const a = ((ghosts - i + 1) / ghosts) * 0.12;
-    const dx = (i / ghosts) * travel;
-    ctx.globalAlpha = a;
-    ctx.drawImage(prepared, -dx, 0);
-    ctx.drawImage(prepared, dx, 0);
-  }
-  ctx.restore();
-  ctx.globalAlpha = 1;
-  ctx.drawImage(prepared, 0, 0);
-}
-
-/** Assemble les couches avec profondeur de champ dans une image nette non exposée. */
-export function compositeScene(layers: SceneLayers, blur: BlurRadii, includeMid = true): HTMLCanvasElement {
-  const w = layers.far.width;
-  const h = layers.far.height;
-  const out = makeCanvas(w, h);
-  const ctx = ctx2d(out);
-
-  // décor : constitution progressive du net vers le sujet (rampe verticale)
-  const bgNearRadius = dofRadius(8, layers.aperture, layers.focalLength, layers.focusZ);
-  drawDepthRamp(ctx, layers.far, blur.far, bgNearRadius, layers.focusScreenY);
-  if (layers.focusOnSubject) {
-    drawGroundBokeh(ctx, layers.far, layers.subjectFeetScreenY, Math.max(blur.fg, blur.far * 1.25));
-  }
-  if (includeMid) drawLayer(ctx, layers.mid, blur.mid);
-
-  // Paysage puis sujet : le personnage, le foyer et le ventilateur sont
-  // physiquement devant les collines et le lac.
-  // La famille est immobile : le filé concerne uniquement le moulin animé,
-  // jamais les personnages du calque sujet.
-  const subjectMotion = 0;
-  drawLayer(ctx, layers.nearBg, blur.nearBg);
-  drawSubject(ctx, layers.subject, blur.subject * 0.15, subjectMotion, layers.subjectPxPerM);
-
-  drawLayer(ctx, layers.fg, blur.fg);
-  return out;
 }
 
 /* ------------------------------ Post-processing -------------------------- */

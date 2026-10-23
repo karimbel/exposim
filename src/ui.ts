@@ -18,8 +18,11 @@ import {
 } from './camera/exposure';
 import { exposeLayer, handheldMinShutter, motionAmount, postProcess, shakeBlur, shakeLengthPx } from './effects/post';
 import { blurRadius, drawSpinner, renderDepthOfField } from './effects/dof';
+import { smoothWater } from './effects/water';
+import { FireAnimator, splitFire, type FireLayers } from './effects/fire';
 import {
   croppedDisparity,
+  croppedMask,
   drawCropped,
   loadPhotoScenes,
   photoCrop,
@@ -30,10 +33,8 @@ import {
   type PhotoScene
 } from './scene/photoScenes';
 import { makeCanvas } from './scene/objects';
-import { renderScene } from './scene/world';
 import { journal } from './debug/journal';
 import { lightIconSvg } from './lightIcons';
-import { REF_FOCAL_MM } from './scene/sceneConfig';
 
 // Plein format 24 × 36 mm : ratio 3:2.
 export const SCENE_W = 1050;
@@ -46,10 +47,15 @@ const COPY = {
     tagline: 'Simulateur photographique — la scène, notre image.',
     scene: 'Lumière de la scène', light: 'Luminosité', temperature: 'Balance des blancs',
     lens: 'Objectif', distance: 'Distance au sujet', focal: 'Focale (zoom)',
-    series: 'Série', tripod: 'Trépied (stabilise l’image)', capture: 'Déclencher', shortcut: 'ou appuyer sur Espace',
-    save: 'Sauvegarder l’image', gallery: 'Photos prises', galleryHint: 'cliquez pour agrandir · ✕ pour supprimer',
+    series: 'Série', tripod: 'Trépied (stabilise l’image)', highlights: 'Alerte hautes lumières', thirds: 'Grille des tiers', compare: 'Comparer avec une autre photo', capture: 'Déclencher', shortcut: 'ou appuyer sur Espace',
+    save: 'Exporter l’image (PNG)', gallery: 'Photos prises', galleryHint: 'cliquez pour agrandir · ⇄ comparer deux photos · ⇩ exporter · ✕ supprimer',
     empty: 'Aucune photo pour le moment.', backLive: 'Revenir au direct',
     bokeh: 'Effet bokeh marqué', depth: 'Profondeur de champ', motionBlur: 'Flou de filé possible', frozen: 'Mouvement figé',
+    sharpRange: (a: string, b: string) => `Net de ${a} à ${b}`, sharpToInf: (a: string) => `Net de ${a} à l’infini`,
+    spinFrozen: 'Moulinet figé', spinSlight: 'Moulinet : léger filé', spinStrong: 'Moulinet : filé marqué', spinDisc: 'Moulinet : disque flou',
+    waterSmooth: 'eau lissée', waterSilk: 'eau laiteuse',
+    fireFrozen: 'Flammes figées', fireSlight: 'Flammes : léger flou', fireVeil: 'Flammes : voile lumineux',
+    grain: ['Grain invisible', 'Léger grain', 'Grain visible', 'Grain marqué'],
     handheld: (min: string, focal: number) => `Risque de bougé : ${min} s mini à ${focal} mm`,
     program: 'L’appareil choisit le diaphragme et la vitesse.',
     aperturePriority: 'Vous choisissez l’ouverture ; l’appareil règle la vitesse.',
@@ -61,10 +67,15 @@ const COPY = {
     tagline: 'Photography simulator — the scene, our image.',
     scene: 'Scene light', light: 'Brightness', temperature: 'White balance',
     lens: 'Lens', distance: 'Subject distance', focal: 'Focal length (zoom)',
-    series: 'Series', tripod: 'Tripod (stabilizes the image)', capture: 'Capture', shortcut: 'or press Space',
-    save: 'Save image', gallery: 'Captured photos', galleryHint: 'click to enlarge · ✕ to delete',
+    series: 'Series', tripod: 'Tripod (stabilizes the image)', highlights: 'Highlight alert', thirds: 'Rule-of-thirds grid', compare: 'Compare with another photo', capture: 'Capture', shortcut: 'or press Space',
+    save: 'Export image (PNG)', gallery: 'Captured photos', galleryHint: 'click to enlarge · ⇄ compare two photos · ⇩ export · ✕ delete',
     empty: 'No photos yet.', backLive: 'Return to live view',
     bokeh: 'Strong bokeh effect', depth: 'Depth of field', motionBlur: 'Motion blur possible', frozen: 'Motion frozen',
+    sharpRange: (a: string, b: string) => `Sharp from ${a} to ${b}`, sharpToInf: (a: string) => `Sharp from ${a} to infinity`,
+    spinFrozen: 'Pinwheel frozen', spinSlight: 'Pinwheel: slight blur', spinStrong: 'Pinwheel: strong blur', spinDisc: 'Pinwheel: blurred disc',
+    waterSmooth: 'smoothed water', waterSilk: 'silky water',
+    fireFrozen: 'Flames frozen', fireSlight: 'Flames: slight blur', fireVeil: 'Flames: glowing veil',
+    grain: ['No visible grain', 'Slight grain', 'Visible grain', 'Strong grain'],
     handheld: (min: string, focal: number) => `Camera shake risk: ${min} s min. at ${focal} mm`,
     program: 'The camera selects aperture and shutter speed.',
     aperturePriority: 'You select the aperture; the camera sets shutter speed.',
@@ -80,6 +91,8 @@ const COPY = {
 export interface Shot {
   canvas: HTMLCanvasElement;
   label: string;
+  /** Réglages abrégés, affichés sous la vignette (deux lignes). */
+  short: [string, string];
 }
 
 export class Simulator {
@@ -208,23 +221,19 @@ export class Simulator {
 
   /* --------------------------------- rendu -------------------------------- */
 
-  renderScene(animate: boolean): ReturnType<typeof renderScene> {
-    return renderScene({ settings: this.settings, width: SCENE_W, height: SCENE_H, seed: 7, animate });
-  }
-
   /* ------------------------- scène photo + profondeur ------------------------ */
 
   private frameKey = '';
-  private frame: { plate: HTMLCanvasElement; disp: Float32Array; crop: Crop; spinner: HTMLCanvasElement | null } | null = null;
+  private frame: { plate: HTMLCanvasElement; disp: Float32Array; crop: Crop; spinner: HTMLCanvasElement | null; water: HTMLCanvasElement | null } | null = null;
   private liveKey = '';
   private liveCanvas: HTMLCanvasElement | null = null;
-  private spinnerKey = '';
   private spinnerReady: HTMLCanvasElement | null = null;
+  private fireReady: FireAnimator | null = null;
+  private fireSplit = new Map<string, FireLayers>();
 
   /** Invalide les caches du viseur (après un changement de réglage). */
   clearStaticCache(): void {
     this.liveKey = '';
-    this.spinnerKey = '';
   }
 
   private scene(): PhotoScene {
@@ -251,7 +260,9 @@ export class Simulator {
         spinner = makeCanvas(spriteImg.width, spriteImg.height);
         spinner.getContext('2d')!.drawImage(spriteImg, 0, 0);
       }
-      this.frame = { plate, disp, crop, spinner };
+      const waterImg = scene.water ? photoImage(scene.water) : null;
+      const water = waterImg ? croppedMask(waterImg, crop, SCENE_W, SCENE_H) : null;
+      this.frame = { plate, disp, crop, spinner, water };
       this.frameKey = key;
     }
     return this.frame;
@@ -263,6 +274,27 @@ export class Simulator {
     const scale = PHOTO_REF_DIST / s.distance;
     if (s.focusDistance === null) return this.scene().subjectDisp * scale;
     return (1 / s.focusDistance) * scale;
+  }
+
+  /**
+   * Zone nette (m) selon la formule optique classique, cercle de confusion
+   * de 0,03 mm (plein format) : distance de mise au point s, focale f,
+   * ouverture N, hyperfocale H = f²/(N·c) + f.
+   */
+  dofRange(): { near: number; far: number } {
+    const s = 1 / Math.max(this.focusDisp(), 1e-4);
+    const f = this.settings.focalLength / 1000;
+    const N = this.settings.aperture;
+    const H = (f * f) / (N * 0.00003) + f;
+    const near = (s * (H - f)) / (H + s - 2 * f);
+    const far = s >= H ? Infinity : (s * (H - f)) / (H - s);
+    return { near, far };
+  }
+
+  /** Angle (degrés) parcouru par l'objet en rotation pendant la pose, ou null s'il n'y en a pas. */
+  spinnerArcDeg(): number | null {
+    const sp = this.scene().spinner;
+    return sp ? (sp.realSpin * this.settings.shutter * 180) / Math.PI : null;
   }
 
   /** Distance (dans l'image d'origine) du point visé, pour la mise au point au clic. */
@@ -279,6 +311,38 @@ export class Simulator {
     return Math.abs(1 / z - this.scene().subjectDisp) < 0.02;
   }
 
+  /** Bûches et flammes séparées, une fois par scène. */
+  private fireLayers(): FireLayers | null {
+    const scene = this.scene();
+    if (!scene.fire) return null;
+    let layers = this.fireSplit.get(scene.id);
+    if (!layers) {
+      const img = photoImage(scene.fire.file);
+      if (!img) return null;
+      layers = splitFire(img);
+      this.fireSplit.set(scene.id, layers);
+    }
+    return layers;
+  }
+
+  /** Rectangle du feu dans le viseur (px), selon le cadrage. */
+  private firePose() {
+    const fire = this.scene().fire;
+    if (!fire) return null;
+    const c = this.photoFrame().crop;
+    return {
+      x: ((fire.x - c.x) / c.w) * SCENE_W,
+      y: ((fire.y - c.y) / c.h) * SCENE_H,
+      w: (fire.w / c.w) * SCENE_W,
+      h: (fire.h / c.h) * SCENE_H
+    };
+  }
+
+  /** La scène contient-elle un feu animé ? */
+  hasFire(): boolean {
+    return !!this.scene().fire;
+  }
+
   private spinnerPose(elapsed: number) {
     const sp = this.scene().spinner;
     const f = this.photoFrame();
@@ -293,12 +357,14 @@ export class Simulator {
   }
 
   /** Image simulée sans l'objet animé : profondeur de champ, exposition, couleur, grain. */
-  private renderStill(motion: number): { image: HTMLCanvasElement; spinner: HTMLCanvasElement | null } {
+  private renderStill(motion: number): { image: HTMLCanvasElement; spinner: HTMLCanvasElement | null; fire: FireAnimator | null } {
     const s = this.settings;
     const f = this.photoFrame();
     const focusDisp = this.focusDisp();
     const t0 = performance.now();
-    const sharp = renderDepthOfField(f.plate, f.disp, focusDisp, s.aperture, s.focalLength);
+    // Pose longue : l'eau se lisse avant le calcul du flou de profondeur.
+    const plate = f.water ? smoothWater(f.plate, f.water, s.shutter) : f.plate;
+    const sharp = renderDepthOfField(plate, f.disp, focusDisp, s.aperture, s.focalLength);
     const exposure = exposureRatio(s.aperture, s.shutter, s.iso, s.lighting);
     const referenceK = this.scene().nativeK;
     const image = postProcess(sharp, { exposure, iso: s.iso, temperatureK: s.temperatureK, referenceK, shakeAmount: 0, motionAmount: motion });
@@ -317,11 +383,36 @@ export class Simulator {
       }
       spinner = exposeLayer(src, exposure, s.temperatureK, referenceK);
     }
+    let fire: FireAnimator | null = null;
+    const layers = this.fireLayers();
+    const fp = this.firePose();
+    if (layers && fp) {
+      // Flou de profondeur au pied du feu, à l'échelle du sprite.
+      const bx = clamp(Math.round(fp.x + fp.w / 2), 0, SCENE_W - 1);
+      const by = clamp(Math.round(fp.y + fp.h * 0.9), 0, SCENE_H - 1);
+      const r = blurRadius(f.disp[by * SCENE_W + bx], focusDisp, s.aperture, s.focalLength, SCENE_W) * (layers.flame.width / Math.max(1, fp.w));
+      const prep = (layer: HTMLCanvasElement): HTMLCanvasElement => {
+        let src = layer;
+        if (r > 0.5) {
+          src = makeCanvas(layer.width, layer.height);
+          const c = src.getContext('2d')!;
+          c.filter = `blur(${(r * 0.62).toFixed(2)}px)`;
+          c.drawImage(layer, 0, 0);
+        }
+        return exposeLayer(src, exposure, s.temperatureK, referenceK);
+      };
+      fire = new FireAnimator({ logs: prep(layers.logs), flame: prep(layers.flame) });
+    }
     this.lastRenderMs = Math.round(performance.now() - t0);
-    return { image, spinner };
+    return { image, spinner, fire };
   }
 
   lastRenderMs = 0;
+
+  /** Dernier rendu du viseur sans l'objet animé (sert à l'alerte de hautes lumières). */
+  stillCanvas(): HTMLCanvasElement | null {
+    return this.liveCanvas;
+  }
 
   /** État interne utile au diagnostic (journal). */
   debugInfo(): Record<string, unknown> {
@@ -345,15 +436,20 @@ export class Simulator {
       const still = this.renderStill(0);
       this.liveCanvas = still.image;
       this.spinnerReady = still.spinner;
+      this.fireReady = still.fire;
       this.liveKey = key;
     }
     const pose = this.spinnerPose(elapsed);
-    if (!pose || !this.spinnerReady) return this.liveCanvas;
+    const fp = this.firePose();
+    const spin = pose && this.spinnerReady;
+    const fire = fp && this.fireReady;
+    if (!spin && !fire) return this.liveCanvas;
     const out = makeCanvas(SCENE_W, SCENE_H);
     const ctx = out.getContext('2d')!;
     ctx.drawImage(this.liveCanvas, 0, 0);
     // Le viseur montre déjà le filé que produira la vitesse choisie.
-    drawSpinner(ctx, this.spinnerReady, pose.cx, pose.cy, pose.size, pose.rotation, pose.arc);
+    if (pose && this.spinnerReady) drawSpinner(ctx, this.spinnerReady, pose.cx, pose.cy, pose.size, pose.rotation, pose.arc);
+    if (fp && this.fireReady) this.fireReady.draw(ctx, fp.x, fp.y, fp.w, fp.h, elapsed / 1000, s.shutter);
     return out;
   }
 
@@ -366,6 +462,8 @@ export class Simulator {
     ctx.drawImage(still.image, 0, 0);
     const pose = this.spinnerPose(elapsed);
     if (pose && still.spinner) drawSpinner(ctx, still.spinner, pose.cx, pose.cy, pose.size, pose.rotation, pose.arc);
+    const fp = this.firePose();
+    if (fp && still.fire) still.fire.draw(ctx, fp.x, fp.y, fp.w, fp.h, elapsed / 1000, s.shutter);
     const final = shakeBlur(out, shakeLengthPx(s.shutter, s.focalLength, s.tripod));
     this.lastShot = final;
     return final;
@@ -617,7 +715,7 @@ export function buildApp(root: HTMLElement, language: Language): void {
       isActive: () => true
     },
     {
-      label: 'Ouverture',
+      label: language === 'fr' ? 'Ouverture' : 'Aperture',
       icon: 'aperture',
       fmt: (v) => formatAperture(cfg.apertureStops[Math.round(v)]),
       min: 0, max: cfg.apertureStops.length - 1, step: 1,
@@ -626,7 +724,7 @@ export function buildApp(root: HTMLElement, language: Language): void {
       isActive: () => apertureEnabled()
     },
     {
-      label: 'Vitesse',
+      label: language === 'fr' ? 'Vitesse' : 'Shutter',
       icon: 'shutter',
       fmt: (v) => formatShutterValue(cfg.shutterStops[Math.round(v)]),
       min: 0, max: cfg.shutterStops.length - 1, step: 1,
@@ -665,7 +763,9 @@ export function buildApp(root: HTMLElement, language: Language): void {
   for (const corner of ['tl', 'tr', 'bl', 'br']) vfBrackets.append(el('span', `vf-bracket vf-bracket--${corner}`));
   const vfAf = el('div', 'vf-af', '');
   vfAf.setAttribute('aria-label', 'Mise au point verrouillée sur le sujet');
-  vfOverlay.append(vfBrackets, vfAf);
+  const vfGrid = el('div', 'vf-grid');
+  for (const line of ['v1', 'v2', 'h1', 'h2']) vfGrid.append(el('span', `vf-grid__line vf-grid__line--${line}`));
+  vfOverlay.append(vfGrid, vfBrackets, vfAf);
 
   const vfHistogram = document.createElement('canvas');
   vfHistogram.className = 'vf-histogram';
@@ -717,8 +817,9 @@ export function buildApp(root: HTMLElement, language: Language): void {
   const galleryStrip = el('div', 'gallery__strip');
   galleryStrip.append(el('div', 'gallery__empty', copy.empty));
 
-  const recap = el('div', 'recap', '');
-  gallery.append(galleryHead, galleryStrip, recap);
+  const galleryMain = el('div', 'gallery__main');
+  galleryMain.append(galleryHead, galleryStrip);
+  gallery.append(galleryMain);
   main.append(gallery);
 
   /* -------------------------------- panneau ------------------------------- */
@@ -782,24 +883,36 @@ export function buildApp(root: HTMLElement, language: Language): void {
   tripodRow.append(tripodCheck, el('span', 'control__label', copy.tripod));
   tripodCheck.addEventListener('change', () => sim.setTripod(tripodCheck.checked));
   serSec.append(tripodRow);
+  // Alerte de hautes lumières : les zones brûlées clignotent en noir,
+  // dans le viseur comme sur les photos prises.
+  const gridRow = el('label', 'control control--tripod');
+  const gridCheck = document.createElement('input');
+  gridCheck.type = 'checkbox';
+  gridCheck.id = 'thirds';
+  gridCheck.checked = false;
+  gridRow.append(gridCheck, el('span', 'control__label', copy.thirds));
+  gridCheck.addEventListener('change', () => {
+    vfGrid.classList.toggle('is-visible', gridCheck.checked);
+    journal('grille-tiers', { active: gridCheck.checked });
+  });
+  serSec.append(gridRow);
+  const hiRow = el('label', 'control control--tripod');
+  const hiCheck = document.createElement('input');
+  hiCheck.type = 'checkbox';
+  hiCheck.id = 'highlights';
+  hiCheck.checked = false;
+  hiRow.append(hiCheck, el('span', 'control__label', copy.highlights));
+  hiCheck.addEventListener('change', () => journal('alerte-hautes-lumieres', { active: hiCheck.checked }));
+  serSec.append(hiRow);
   panel.append(serSec);
 
   const captureAction = el('div', 'panel__action panel__action--capture');
   const captureText = el('div', 'panel__action-copy');
   captureText.append(el('strong', undefined, copy.capture), el('span', undefined, copy.shortcut));
   captureAction.append(captureText, shutterBtn);
-  panel.append(captureAction);
-
-  const saveBtn = el('button', 'btn btn--save');
-  saveBtn.type = 'button';
-  saveBtn.disabled = true;
-  const saveIcon = el('span', 'save__icon', '⇩');
-  saveIcon.setAttribute('aria-hidden', 'true');
-  const saveText = el('span', 'save__text', copy.save);
-  const saveBadge = el('span', 'save__badge', 'PNG');
-  saveBadge.title = 'Image PNG haute qualité';
-  saveBtn.append(saveIcon, saveText, saveBadge);
-  panel.append(saveBtn);
+  // Le déclencheur est à droite de la galerie : on prend la photo là où elle
+  // vient se ranger.
+  gallery.append(captureAction);
 
   main.append(panel);
   root.append(main);
@@ -815,10 +928,19 @@ export function buildApp(root: HTMLElement, language: Language): void {
   lightboxCanvas.height = SCENE_H;
   lightboxCanvas.className = 'lightbox__canvas';
   const lightboxCaption = el('div', 'lightbox__caption', '');
+  const lightboxCanvas2 = document.createElement('canvas');
+  lightboxCanvas2.width = SCENE_W;
+  lightboxCanvas2.height = SCENE_H;
+  lightboxCanvas2.className = 'lightbox__canvas';
+  const lightboxCaption2 = el('div', 'lightbox__caption', '');
+  const lightboxFig = el('div', 'lightbox__fig');
+  lightboxFig.append(lightboxCanvas, lightboxCaption);
+  const lightboxFig2 = el('div', 'lightbox__fig lightbox__fig--second');
+  lightboxFig2.append(lightboxCanvas2, lightboxCaption2);
   const lightboxClose = el('button', 'lightbox__close', '×');
   lightboxClose.type = 'button';
   lightboxClose.setAttribute('aria-label', language === 'fr' ? 'Fermer la photo agrandie' : 'Close enlarged photo');
-  lightboxFrame.append(lightboxCanvas, lightboxCaption, lightboxClose);
+  lightboxFrame.append(lightboxFig, lightboxFig2, lightboxClose);
   lightbox.append(lightboxFrame);
   root.append(lightbox);
 
@@ -828,8 +950,9 @@ export function buildApp(root: HTMLElement, language: Language): void {
   /* galerie */
   const shots: Shot[] = [];
   let selectedShot: Shot | null = null;
+  /** Photos cochées pour la comparaison (deux au plus). */
+  const compareSel: Shot[] = [];
   let freezeUntil = 0;
-  let shownCanvas: HTMLCanvasElement | null = null;
   let lastHistogramAt = 0;
 
   function drawHistogram(c: HTMLCanvasElement): void {
@@ -866,20 +989,88 @@ export function buildApp(root: HTMLElement, language: Language): void {
     hctx.stroke();
   }
 
-  function drawCanvas(c: HTMLCanvasElement): void {
-    shownCanvas = c;
+  /** Zones brûlées (au moins un canal saturé), mémoïsées par image source. */
+  let clipSource: HTMLCanvasElement | null = null;
+  let clipMask: HTMLCanvasElement | null = null;
+  function clippedMask(src: HTMLCanvasElement): HTMLCanvasElement | null {
+    if (clipSource === src) return clipMask;
+    clipSource = src;
+    // Analyse à 1/3 de résolution : le moyennage efface le grain, sinon le
+    // masque serait un semis de points au lieu de zones nettes.
+    const sw = Math.max(1, Math.round(src.width / 3));
+    const sh = Math.max(1, Math.round(src.height / 3));
+    const small = makeCanvas(sw, sh);
+    const sctx = small.getContext('2d')!;
+    sctx.imageSmoothingQuality = 'high';
+    sctx.drawImage(src, 0, 0, sw, sh);
+    const data = sctx.getImageData(0, 0, sw, sh);
+    const d = data.data;
+    let count = 0;
+    const flags = new Uint8Array(sw * sh);
+    for (let i = 0; i < d.length; i += 4) {
+      flags[i >> 2] = Math.max(d[i], d[i + 1], d[i + 2]) >= 249 ? 1 : 0;
+    }
+    // Filtre majoritaire 3 × 3 : les pixels isolés disparaissent, les zones
+    // brûlées restent d'un seul tenant.
+    for (let y = 0; y < sh; y++) {
+      for (let x = 0; x < sw; x++) {
+        let n = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          const yy = Math.min(sh - 1, Math.max(0, y + dy));
+          for (let dx = -1; dx <= 1; dx++) n += flags[yy * sw + Math.min(sw - 1, Math.max(0, x + dx))];
+        }
+        const clipped = n >= 5;
+        const i = (y * sw + x) * 4;
+        d[i] = 0; d[i + 1] = 0; d[i + 2] = 0;
+        d[i + 3] = clipped ? 235 : 0;
+        if (clipped) count++;
+      }
+    }
+    // Quelques pixels isolés (reflets ponctuels) ne déclenchent pas l'alerte.
+    if (count < (d.length / 4) * 0.0004) { clipMask = null; return null; }
+    sctx.putImageData(data, 0, 0);
+    clipMask = small;
+    return clipMask;
+  }
+
+  function drawCanvas(c: HTMLCanvasElement, still: HTMLCanvasElement = c): void {
     ctx.drawImage(c, 0, 0);
     drawHistogram(c);
+    // Clignotement (≈ 3 fois par seconde), comme à la relecture sur un appareil.
+    if (hiCheck.checked && Math.floor(performance.now() / 330) % 2 === 0) {
+      const mask = clippedMask(still);
+      if (mask) {
+        ctx.imageSmoothingEnabled = true;
+        ctx.drawImage(mask, 0, 0, c.width, c.height);
+      }
+    }
   }
 
   function openLightbox(shot: Shot): void {
+    lightboxFrame.classList.remove('is-compare');
     lightboxCanvas.getContext('2d')!.drawImage(shot.canvas, 0, 0);
     lightboxCaption.textContent = shot.label;
     lightbox.classList.add('is-open');
     lightboxClose.focus();
   }
 
+  /** Deux photos côte à côte (ex. f/1.4 contre f/16). */
+  function openCompare(a: Shot, b: Shot): void {
+    lightboxFrame.classList.add('is-compare');
+    lightboxCanvas.getContext('2d')!.drawImage(a.canvas, 0, 0);
+    lightboxCaption.textContent = `#${shots.indexOf(a) + 1} · ${a.label}`;
+    lightboxCanvas2.getContext('2d')!.drawImage(b.canvas, 0, 0);
+    lightboxCaption2.textContent = `#${shots.indexOf(b) + 1} · ${b.label}`;
+    lightbox.classList.add('is-open');
+    lightboxClose.focus();
+    journal('comparaison', { a: a.label, b: b.label });
+  }
+
   function closeLightbox(): void {
+    if (compareSel.length > 0) {
+      compareSel.length = 0;
+      refreshGallery();
+    }
     lightbox.classList.remove('is-open');
   }
 
@@ -889,14 +1080,18 @@ export function buildApp(root: HTMLElement, language: Language): void {
   });
 
   function paint(elapsed: number): void {
-    if (selectedShot) return;
+    if (selectedShot) {
+      // Photo affichée : on la redessine pour faire clignoter l'alerte.
+      if (hiCheck.checked) drawCanvas(selectedShot.canvas);
+      return;
+    }
     if (elapsed < freezeUntil) return;
     simulateLiveDraw(elapsed);
   }
 
   let shakeLogged = false;
   function simulateLiveDraw(elapsed: number): void {
-    drawCanvas(sim.renderPreview(elapsed));
+    drawCanvas(sim.renderPreview(elapsed), sim.stillCanvas() ?? undefined);
     if (!sim.settings.tripod) {
       // À main levée, la main tremble en permanence : le viseur bouge
       // doucement, d'autant plus qu'on zoome. La vitesse ne change que ce
@@ -929,6 +1124,32 @@ export function buildApp(root: HTMLElement, language: Language): void {
       thumb.height = 176;
       thumb.getContext('2d')!.drawImage(shot.canvas, 0, 0, thumb.width, thumb.height);
       const meta = el('div', 'shot__meta', `#${i + 1}`);
+      const settings = el('div', 'shot__settings');
+      settings.append(el('span', '', shot.short[0]), el('span', '', shot.short[1]));
+      const cmp = el('button', 'shot__cmp', '⇄');
+      cmp.type = 'button';
+      cmp.title = copy.compare;
+      cmp.setAttribute('aria-label', copy.compare);
+      if (compareSel.includes(shot)) {
+        card.classList.add('shot--compare');
+        cmp.classList.add('is-on');
+      }
+      cmp.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const at = compareSel.indexOf(shot);
+        if (at >= 0) compareSel.splice(at, 1);
+        else compareSel.push(shot);
+        refreshGallery();
+        if (compareSel.length === 2) openCompare(compareSel[0], compareSel[1]);
+      });
+      const save = el('button', 'shot__save', '⇩');
+      save.type = 'button';
+      save.title = copy.save;
+      save.setAttribute('aria-label', copy.save);
+      save.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        exportShot(shot);
+      });
       const del = el('button', 'shot__del', '✕');
       del.type = 'button';
       del.title = language === 'fr' ? 'Supprimer' : 'Delete';
@@ -936,6 +1157,8 @@ export function buildApp(root: HTMLElement, language: Language): void {
         ev.stopPropagation();
         const idx = shots.indexOf(shot);
         if (idx >= 0) shots.splice(idx, 1);
+        const sel = compareSel.indexOf(shot);
+        if (sel >= 0) compareSel.splice(sel, 1);
         if (selectedShot === shot) {
           selectedShot = null;
           simulateLiveDraw(performance.now());
@@ -943,7 +1166,9 @@ export function buildApp(root: HTMLElement, language: Language): void {
         refreshGallery();
         syncAll();
       });
-      card.append(thumb, meta, del);
+      const pic = el('div', 'shot__pic');
+      pic.append(thumb, meta, cmp, save, del);
+      card.append(pic, settings);
       card.addEventListener('click', () => {
         selectedShot = shot;
         drawCanvas(shot.canvas);
@@ -955,15 +1180,14 @@ export function buildApp(root: HTMLElement, language: Language): void {
     }
   }
 
-  function selectFromRecap(): void {
-    recap.textContent = '';
-    if (selectedShot) {
-      recap.textContent = selectedShot.label;
-    }
-    saveBtn.disabled = !(selectedShot || sim.lastShot);
-    // Une étiquette de taille fixe évite de modifier la hauteur du panneau à
-    // la prise de vue, et donc de faire apparaître une barre de défilement.
-    saveText.textContent = copy.save;
+  /** Export PNG d'une photo, nommé d'après ses réglages. */
+  function exportShot(shot: Shot): void {
+    const s = shot.short.join('-').replace(/[^a-zA-Z0-9.]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+    const a = document.createElement('a');
+    a.download = `exposim-${shots.indexOf(shot) + 1}-${s}.png`;
+    a.href = shot.canvas.toDataURL('image/png');
+    a.click();
+    journal('export', { photo: shot.label });
   }
 
   /* ------------------------------ diagnostic ------------------------------ */
@@ -1002,15 +1226,32 @@ export function buildApp(root: HTMLElement, language: Language): void {
       dialNodes[i].badge.classList.toggle('is-visible', !active);
       dialNodes[i].setValue();
     }
-    const { aperture, shutter } = sim.settings;
-    dialNodes[1].hint.textContent = aperture <= 2.8 ? copy.bokeh : copy.depth;
+    const { shutter, iso } = sim.settings;
+    const loc = language === 'fr' ? 'fr-FR' : 'en-US';
+    const num = (m: number) => m.toLocaleString(loc, { maximumFractionDigits: m < 10 ? 1 : 0 });
+
+    // ISO : niveau de grain.
+    dialNodes[0].hint.textContent = copy.grain[iso <= 200 ? 0 : iso <= 800 ? 1 : iso <= 3200 ? 2 : 3];
+
+    // Ouverture : zone nette réelle (profondeur de champ optique).
+    const dof = sim.dofRange();
+    dialNodes[1].hint.textContent = dof.far === Infinity ? copy.sharpToInf(`${num(dof.near)} m`) : copy.sharpRange(num(dof.near), `${num(dof.far)} m`);
     // Vitesse lente (≥ 1/30 s) : le mouvement laisse une traînée.
     const minHand = handheldMinShutter(sim.settings.focalLength);
     if (!sim.settings.tripod && shutter > minHand * 1.01) {
       // Règle du 1/focale : en dessous, risque de photo floue à main levée.
       dialNodes[2].hint.textContent = copy.handheld(formatShutterValue(minHand), sim.settings.focalLength);
     } else {
-      dialNodes[2].hint.textContent = shutter >= 1 / 30 ? copy.motionBlur : copy.frozen;
+      // Effet de la vitesse sur ce qui bouge dans la scène.
+      const parts: string[] = [];
+      const spin = sim.spinnerArcDeg();
+      if (spin !== null) parts.push(spin < 6 ? copy.spinFrozen : spin < 45 ? copy.spinSlight : spin < 300 ? copy.spinStrong : copy.spinDisc);
+      if (sim.hasFire()) parts.push(shutter < 1 / 90 ? copy.fireFrozen : shutter < 1 / 15 ? copy.fireSlight : copy.fireVeil);
+      if (shutter >= 1) parts.push(copy.waterSilk);
+      else if (shutter >= 1 / 8) parts.push(copy.waterSmooth);
+      if (parts.length === 0) parts.push(shutter >= 1 / 30 ? copy.motionBlur : copy.frozen);
+      const text = parts.join(' · ');
+      dialNodes[2].hint.textContent = text.charAt(0).toUpperCase() + text.slice(1);
     }
   }
   function syncReadout(): void {
@@ -1082,7 +1323,6 @@ export function buildApp(root: HTMLElement, language: Language): void {
     syncLog();
     syncKelvinMood();
     syncSceneSliders();
-    selectFromRecap();
     liveBtn.classList.toggle('is-visible', selectedShot !== null);
   }
   const pokeUI = syncAll;
@@ -1122,7 +1362,8 @@ export function buildApp(root: HTMLElement, language: Language): void {
     const s = sim.settings;
     const shot: Shot = {
       canvas: shotCanvas,
-      label: `${MODE_LABELS[s.mode]} · ${formatFocal(s.focalLength)} · ${formatAperture(s.aperture)} · ${formatShutterValue(s.shutter)} · ISO${s.iso} · ${formatDistance(s.distance)}`
+      label: `${MODE_LABELS[s.mode]} · ${formatFocal(s.focalLength)} · ${formatAperture(s.aperture)} · ${formatShutterValue(s.shutter)} · ISO${s.iso} · ${formatDistance(s.distance)}`,
+      short: [`${formatAperture(s.aperture)} · ${formatShutterValue(s.shutter)}`, `ISO ${s.iso} · ${formatFocal(s.focalLength)}`]
     };
     shots.push(shot);
     journal('photo', { ...snapshot(), legende: shot.label });
@@ -1175,14 +1416,6 @@ export function buildApp(root: HTMLElement, language: Language): void {
     }, 100);
   }
 
-  saveBtn.addEventListener('click', () => {
-    const src = selectedShot?.canvas ?? sim.lastShot;
-    if (!src) return;
-    const a = document.createElement('a');
-    a.download = `exposim-${Date.now()}.png`;
-    a.href = src.toDataURL('image/png');
-    a.click();
-  });
 
   /* ----------------------------- boucle live ------------------------------ */
   let last = 0;
