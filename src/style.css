@@ -170,7 +170,7 @@ html, body {
   grid-template-areas:
     "cambar panel"
     "stage  panel"
-    "gallery gallery";
+    "gallery panel";
   gap: 14px;
   padding: 14px 20px 16px;
   max-width: 1560px;
@@ -960,22 +960,40 @@ input[type="range"]::-moz-range-thumb {
 
 .app__footer {
   border-top: 1px solid var(--line-soft);
-  padding: 12px 22px;
+  padding: 10px 22px;
   color: var(--text-faint);
   font-size: 12px;
 }
+.app__footer p { margin: 0; }
 
 /* ------------------------------- responsive ------------------------------- */
 
-/* Écrans larges mais peu hauts (portables 1280 × 720, 1366 × 768, 1440 × 900) :
-   le viseur prend toute la hauteur de la fenêtre sous la barre de pose ; la
-   galerie et le pied de page passent en dessous (on fait défiler la page). */
-@media (min-width: 1081px) and (max-height: 920px) {
-  html, body { height: auto; min-height: 100%; overflow: auto; }
-  #app { height: auto; min-height: 100vh; }
-  .app__main { grid-template-rows: auto auto auto; gap: 10px; padding: 10px 16px 14px; }
-  .stage { height: max(380px, calc(100svh - 222px)); padding: 8px; }
+/* Écrans de bureau peu hauts (1280 × 720, 1366 × 768, 1440 × 900…) : tout
+   tient dans la fenêtre, sans défilement. On resserre les marges, la barre
+   de pose et la galerie pour laisser le maximum de hauteur au viseur. */
+@media (min-width: 1081px) and (max-height: 940px) {
+  .app__header { padding: 9px 20px 8px; }
+  .app__footer { padding: 5px 20px; font-size: 11px; }
+  .app__main { gap: 8px; padding: 8px 16px 8px; }
+  .cambar { padding: 7px 10px; gap: 10px; }
+  .dial { padding: 6px 9px 7px; }
+  .dial__head { margin-bottom: 2px; }
+  .dial__value { font-size: 18px; }
+  .dial__btn { width: 26px; height: 26px; font-size: 14px; }
+  .dial__range { margin-top: 4px; }
+  .dial__hint { margin-top: 3px; }
+  .stage { padding: 6px; }
   .panel { gap: 8px; }
+  .panel__section { padding: 9px 12px; gap: 6px; }
+  .gallery { padding: 8px 10px; gap: 10px; }
+  .gallery__main { gap: 6px; }
+  /* Titre et aide de la galerie masqués (l'aide reste en info-bulle). */
+  .gallery__head { display: none; }
+  .gallery__strip { min-height: 98px; padding-bottom: 2px; }
+  .shot canvas { width: 96px; height: 64px; }
+  .shot__settings { font-size: 9.5px; padding: 2px 4px 3px; }
+  .gallery .panel__action--capture { min-width: 120px; padding: 8px 10px; gap: 6px; }
+  .gallery .panel__action .btn--shutter { width: 50px; height: 50px; }
 }
 
 @media (max-width: 1080px) {

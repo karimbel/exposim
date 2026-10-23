@@ -815,6 +815,7 @@ export function buildApp(root: HTMLElement, language: Language): void {
   galleryHead.append(galleryTitle, galleryHint);
 
   const galleryStrip = el('div', 'gallery__strip');
+  galleryStrip.title = copy.galleryHint;
   galleryStrip.append(el('div', 'gallery__empty', copy.empty));
 
   const galleryMain = el('div', 'gallery__main');
