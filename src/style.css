@@ -214,6 +214,12 @@ html, body {
   padding: 6px 10px;
   font-size: 12px;
   width: 100%;
+  /* Hauteur fixe de deux lignes : le message d'exposition peut changer de
+     longueur sans modifier la barre, donc sans redimensionner le viseur. */
+  line-height: 1.4;
+  height: calc(2 * 1.4em + 12px);
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .mode__btn {
@@ -292,7 +298,10 @@ html, body {
 }
 
 .dial__badge {
-  display: none;
+  /* Toujours présent (invisible hors mode auto) : la hauteur du cadran ne
+     change pas quand on passe de P à M. */
+  display: inline-block;
+  visibility: hidden;
   font-size: 10px;
   font-weight: 700;
   color: var(--amber);
@@ -301,7 +310,7 @@ html, body {
   padding: 1px 6px;
   letter-spacing: 0.06em;
 }
-.dial__badge.is-visible { display: inline-block; }
+.dial__badge.is-visible { visibility: visible; }
 
 .dial__row {
   display: flex;
@@ -810,7 +819,10 @@ input[type="range"]::-moz-range-thumb {
 .dial__range { margin-top: 8px; }
 .dial__hint {
   display: block;
-  min-height: 16px;
+  /* Toujours deux lignes réservées : l'indication peut changer de longueur
+     sans modifier la hauteur de la barre, donc sans redimensionner le viseur. */
+  height: 2.4em;
+  overflow: hidden;
   margin-top: 5px;
   color: var(--text-faint);
   font-size: 10px;

@@ -16,10 +16,22 @@ import {
   type SimConfig,
   type SimSettings
 } from './camera/exposure';
-import { computeBlurRadii, compositeScene, exposeLayer, motionAmount, postProcess, shakeAmount } from './effects/post';
-import { animPose, bakeAnimatedSprite, drawAnimatedSprite, loadSceneImages } from './scene/images';
+import { exposeLayer, motionAmount, postProcess, shakeAmount, shakeBlur } from './effects/post';
+import { blurRadius, drawSpinner, renderDepthOfField } from './effects/dof';
+import {
+  croppedDisparity,
+  drawCropped,
+  loadPhotoScenes,
+  photoCrop,
+  photoImage,
+  PHOTO_REF_DIST,
+  sceneForLevel,
+  type Crop,
+  type PhotoScene
+} from './scene/photoScenes';
 import { makeCanvas } from './scene/objects';
-import { renderScene, type SceneLayers } from './scene/world';
+import { renderScene } from './scene/world';
+import { journal } from './debug/journal';
 import { REF_FOCAL_MM } from './scene/sceneConfig';
 
 // Plein format 24 × 36 mm : ratio 3:2.
@@ -110,17 +122,35 @@ export class Simulator {
     this.emitChange();
   }
 
+  /**
+   * Point de mise au point : position dans l'image (ix, iy) et dans le
+   * viseur (sx, sy). Le zoom se fait autour de lui : quand la focale ou la
+   * distance change, ce point reste au même endroit du viseur.
+   * Par défaut, il est posé sur le sujet.
+   */
+  afPoint: { ix: number; iy: number; sx: number; sy: number } | null = null;
+
+  private anchor(): { ix: number; iy: number; sx: number; sy: number } {
+    if (this.afPoint) return this.afPoint;
+    const sc = this.scene();
+    return { ix: sc.subjectX, iy: sc.subjectY, sx: sc.subjectX, sy: sc.subjectY };
+  }
+
+  /** Position actuelle du carré de mise au point dans le viseur (fractions). */
+  afScreen(): { x: number; y: number } {
+    const a = this.anchor();
+    const c = this.photoFrame().crop;
+    return { x: (a.ix - c.x) / c.w, y: (a.iy - c.y) / c.h };
+  }
+
   setFocusAt(x: number, y: number, onSubject: boolean): void {
     this.settings.focusX = clamp(x, 0.04, 0.96);
     this.settings.focusY = clamp(y, 0.04, 0.96);
-    // Un clic sur le sujet le verrouille net ; ailleurs, l'axe vertical du
-    // viseur représente une progression du lointain (haut) au proche (bas).
-    // Trois tiers lisibles : loin en haut, intermédiaire au centre, proche
-    // en bas. Le sujet reste visible : on évite le flou brutal d'un rendu
-    // purement théorique dans un viseur électronique.
-    // Haut du viseur → 30 m, bas du viseur → 0,5 m (jamais de distance nulle ou négative).
-    const t = (this.settings.focusY - 0.04) / 0.92;
-    this.settings.focusDistance = onSubject ? null : clamp(30 - 29.5 * t, 0.5, 30);
+    // Distance réelle du point visé, lue dans la carte de profondeur.
+    this.settings.focusDistance = onSubject ? null : clamp(this.depthAt(x, y), 0.3, 1000);
+    // Le point visé devient le centre du zoom.
+    const c = this.photoFrame().crop;
+    this.afPoint = { ix: c.x + x * c.w, iy: c.y + y * c.h, sx: x, sy: y };
     this.emitChange();
   }
 
@@ -176,91 +206,161 @@ export class Simulator {
     return renderScene({ settings: this.settings, width: SCENE_W, height: SCENE_H, seed: 7, animate });
   }
 
-  private layersKey = '';
-  private layersCache: SceneLayers | null = null;
+  /* ------------------------- scène photo + profondeur ------------------------ */
+
+  private frameKey = '';
+  private frame: { plate: HTMLCanvasElement; disp: Float32Array; crop: Crop; spinner: HTMLCanvasElement | null } | null = null;
   private liveKey = '';
   private liveCanvas: HTMLCanvasElement | null = null;
-  private bakedAnim: HTMLCanvasElement | null = null;
-  private bakeKey = '';
+  private spinnerKey = '';
+  private spinnerReady: HTMLCanvasElement | null = null;
 
   /** Invalide les caches du viseur (après un changement de réglage). */
   clearStaticCache(): void {
     this.liveKey = '';
-    this.bakeKey = '';
+    this.spinnerKey = '';
   }
 
-  /** Calques statiques de la scène, mémoïsés tant que le cadrage ne change pas. */
-  private staticLayers(): SceneLayers {
+  private scene(): PhotoScene {
+    return sceneForLevel(this.settings.lighting);
+  }
+
+  /** Image et disparité recadrées selon la focale et la distance (mémoïsées). */
+  private photoFrame() {
     const s = this.settings;
-    const key = `${s.focalLength}|${s.distance.toFixed(2)}|${s.temperatureK}|${s.aperture}|${s.focusY.toFixed(3)}|${s.focusDistance ?? 'subject'}`;
-    if (!this.layersCache || this.layersKey !== key) {
-      this.layersCache = this.renderScene(false);
-      this.layersKey = key;
+    const scene = this.scene();
+    const a = this.anchor();
+    const key = `${scene.id}|${s.focalLength}|${s.distance.toFixed(2)}|${a.ix.toFixed(4)},${a.iy.toFixed(4)},${a.sx.toFixed(4)},${a.sy.toFixed(4)}`;
+    if (!this.frame || this.frameKey !== key) {
+      const img = photoImage(scene.image);
+      const depth = photoImage(scene.depth);
+      const aspect = SCENE_W / SCENE_H;
+      const imgAspect = img ? img.width / img.height : 1.5;
+      const crop = photoCrop(s.focalLength, s.distance, aspect, imgAspect, a);
+      const plate = img ? drawCropped(img, crop, SCENE_W, SCENE_H) : makeCanvas(SCENE_W, SCENE_H);
+      const disp = depth ? croppedDisparity(depth, crop, SCENE_W, SCENE_H, s.distance) : new Float32Array(SCENE_W * SCENE_H);
+      const spriteImg = scene.spinner ? photoImage(scene.spinner.file) : null;
+      let spinner: HTMLCanvasElement | null = null;
+      if (spriteImg) {
+        spinner = makeCanvas(spriteImg.width, spriteImg.height);
+        spinner.getContext('2d')!.drawImage(spriteImg, 0, 0);
+      }
+      this.frame = { plate, disp, crop, spinner };
+      this.frameKey = key;
     }
-    return this.layersCache;
+    return this.frame;
   }
 
-  /** Le point (fractions du cadre) tombe-t-il sur le sujet ? Sert au clic de mise au point. */
-  isOnSubject(x: number, y: number): boolean {
-    const subject = this.staticLayers().subject;
+  /** Disparité (m⁻¹) du plan net : le sujet, ou le point visé au collimateur. */
+  private focusDisp(): number {
+    const s = this.settings;
+    const scale = PHOTO_REF_DIST / s.distance;
+    if (s.focusDistance === null) return this.scene().subjectDisp * scale;
+    return (1 / s.focusDistance) * scale;
+  }
+
+  /** Distance (dans l'image d'origine) du point visé, pour la mise au point au clic. */
+  depthAt(x: number, y: number): number {
+    const f = this.photoFrame();
     const px = clamp(Math.round(x * SCENE_W), 0, SCENE_W - 1);
     const py = clamp(Math.round(y * SCENE_H), 0, SCENE_H - 1);
-    return subject.getContext('2d')!.getImageData(px, py, 1, 1).data[3] > 32;
+    const d = f.disp[py * SCENE_W + px] / (PHOTO_REF_DIST / this.settings.distance);
+    return 1 / Math.max(d, 1 / 1000);
   }
 
-  /**
-   * Viseur électronique : simulation de l'image réelle (profondeur de champ,
-   * exposition, température de couleur, grain). Le bougé est montré à part,
-   * par le tremblement du viseur.
-   */
+  isOnSubject(x: number, y: number): boolean {
+    const z = this.depthAt(x, y);
+    return Math.abs(1 / z - this.scene().subjectDisp) < 0.02;
+  }
+
+  private spinnerPose(elapsed: number) {
+    const sp = this.scene().spinner;
+    const f = this.photoFrame();
+    if (!sp || !f.spinner) return null;
+    return {
+      cx: ((sp.cx - f.crop.x) / f.crop.w) * SCENE_W,
+      cy: ((sp.cy - f.crop.y) / f.crop.h) * SCENE_H,
+      size: (sp.widthFrac / f.crop.w) * SCENE_W,
+      rotation: (sp.displaySpin * elapsed / 1000) % (Math.PI * 2),
+      arc: sp.realSpin * this.settings.shutter
+    };
+  }
+
+  /** Image simulée sans l'objet animé : profondeur de champ, exposition, couleur, grain. */
+  private renderStill(motion: number): { image: HTMLCanvasElement; spinner: HTMLCanvasElement | null } {
+    const s = this.settings;
+    const f = this.photoFrame();
+    const focusDisp = this.focusDisp();
+    const t0 = performance.now();
+    const sharp = renderDepthOfField(f.plate, f.disp, focusDisp, s.aperture, s.focalLength);
+    const exposure = exposureRatio(s.aperture, s.shutter, s.iso, s.lighting);
+    const image = postProcess(sharp, { exposure, iso: s.iso, temperatureK: s.temperatureK, shakeAmount: 0, motionAmount: motion });
+    let spinner: HTMLCanvasElement | null = null;
+    const sp = this.scene().spinner;
+    if (sp && f.spinner) {
+      // Même flou de profondeur, même exposition et même couleur que la scène.
+      const scale = PHOTO_REF_DIST / s.distance;
+      const r = blurRadius(this.scene().subjectDisp * scale, focusDisp, s.aperture, s.focalLength, SCENE_W) * (f.spinner.width / ((sp.widthFrac / f.crop.w) * SCENE_W));
+      let src = f.spinner;
+      if (r > 0.5) {
+        src = makeCanvas(f.spinner.width, f.spinner.height);
+        const c = src.getContext('2d')!;
+        c.filter = `blur(${(r * 0.62).toFixed(2)}px)`;
+        c.drawImage(f.spinner, 0, 0);
+      }
+      spinner = exposeLayer(src, exposure, s.temperatureK);
+    }
+    this.lastRenderMs = Math.round(performance.now() - t0);
+    return { image, spinner };
+  }
+
+  lastRenderMs = 0;
+
+  /** État interne utile au diagnostic (journal). */
+  debugInfo(): Record<string, unknown> {
+    const f = this.frame;
+    const sp = this.spinnerPose(performance.now());
+    return {
+      scene: this.scene().id,
+      cadrage: f ? { x: +f.crop.x.toFixed(4), y: +f.crop.y.toFixed(4), w: +f.crop.w.toFixed(4), h: +f.crop.h.toFixed(4) } : null,
+      miseAuPointM: +(1 / Math.max(this.focusDisp(), 1e-4)).toFixed(2),
+      moulinet: sp ? { x: Math.round(sp.cx), y: Math.round(sp.cy), taille: Math.round(sp.size), arcRad: +sp.arc.toFixed(3) } : null,
+      renduMs: this.lastRenderMs
+    };
+  }
+
+  /** Viseur électronique : rendu recalculé seulement quand un réglage change. */
   renderPreview(elapsed: number): HTMLCanvasElement {
     const s = this.settings;
-    const layers = this.staticLayers();
-    const key = `${this.layersKey}|${s.shutter}|${s.iso}|${s.lighting}`;
+    this.photoFrame();
+    const key = `${this.frameKey}|${s.aperture}|${s.shutter}|${s.iso}|${s.lighting}|${s.temperatureK}|${s.focusDistance ?? 'subject'}`;
     if (!this.liveCanvas || this.liveKey !== key) {
-      const composed = compositeScene(layers, computeBlurRadii(layers), false);
-      this.liveCanvas = postProcess(composed, {
-        exposure: exposureRatio(s.aperture, s.shutter, s.iso, s.lighting),
-        iso: s.iso,
-        temperatureK: s.temperatureK,
-        shakeAmount: 0,
-        motionAmount: 0
-      });
+      const still = this.renderStill(0);
+      this.liveCanvas = still.image;
+      this.spinnerReady = still.spinner;
       this.liveKey = key;
     }
-
-    // Le moulinet est superposé en direct : il reçoit le même flou de
-    // profondeur, la même exposition et la même couleur que le reste du viseur.
-    const bakeKey = key;
-    if (this.bakeKey !== bakeKey) {
-      const sprite = bakeAnimatedSprite(elapsed, SCENE_W, SCENE_H, s.focalLength, s.distance, computeBlurRadii(layers).mid, s.shutter);
-      this.bakedAnim = sprite
-        ? exposeLayer(sprite, exposureRatio(s.aperture, s.shutter, s.iso, s.lighting), s.temperatureK)
-        : null;
-      this.bakeKey = bakeKey;
-    }
-    if (!this.bakedAnim) return this.liveCanvas;
-
-    // Élément animé superposé au rendu (calque `mid`, s'il est configuré).
+    const pose = this.spinnerPose(elapsed);
+    if (!pose || !this.spinnerReady) return this.liveCanvas;
     const out = makeCanvas(SCENE_W, SCENE_H);
     const ctx = out.getContext('2d')!;
     ctx.drawImage(this.liveCanvas, 0, 0);
-    drawAnimatedSprite(ctx, animPose(elapsed, SCENE_W, SCENE_H, s.focalLength, s.distance, s.shutter), this.bakedAnim);
+    // Le viseur montre déjà le filé que produira la vitesse choisie.
+    drawSpinner(ctx, this.spinnerReady, pose.cx, pose.cy, pose.size, pose.rotation, pose.arc);
     return out;
   }
 
-  /** Prise de vue complète (élément animé figé + bougé + vitesse lente). */
-  capture(_elapsed: number): HTMLCanvasElement {
+  /** Prise de vue : filé de l'objet animé pendant la pose, puis bougé éventuel. */
+  capture(elapsed: number): HTMLCanvasElement {
     const s = this.settings;
-    const layers = this.renderScene(true);
-    const composed = compositeScene(layers, computeBlurRadii(layers));
-    const final = postProcess(composed, {
-      exposure: exposureRatio(s.aperture, s.shutter, s.iso, s.lighting),
-      iso: s.iso,
-      temperatureK: s.temperatureK,
-      shakeAmount: shakeAmount(s.shutter, s.tripod),
-      motionAmount: motionAmount(s.shutter)
-    });
+    const still = this.renderStill(motionAmount(s.shutter));
+    const out = makeCanvas(SCENE_W, SCENE_H);
+    const ctx = out.getContext('2d')!;
+    ctx.drawImage(still.image, 0, 0);
+    const pose = this.spinnerPose(elapsed);
+    if (pose && still.spinner) drawSpinner(ctx, still.spinner, pose.cx, pose.cy, pose.size, pose.rotation, pose.arc);
+    const shake = shakeAmount(s.shutter, s.tripod);
+    const final = shake > 0.02 ? shakeBlur(out, shake) : out;
     this.lastShot = final;
     return final;
   }
@@ -592,6 +692,7 @@ export function buildApp(root: HTMLElement, language: Language): void {
     const scale = Math.max(0.01, Math.min(r.width / SCENE_W, r.height / SCENE_H));
     const w = Math.floor(SCENE_W * scale);
     if (w !== fitW) {
+      journal('redimensionnement', { avant: fitW, apres: w, scene: [Math.round(r.width), Math.round(r.height)] });
       fitW = w;
       viewfinder.style.width = `${w}px`;
     }
@@ -788,6 +889,7 @@ export function buildApp(root: HTMLElement, language: Language): void {
     simulateLiveDraw(elapsed);
   }
 
+  let shakeLogged = false;
   function simulateLiveDraw(elapsed: number): void {
     drawCanvas(sim.renderPreview(elapsed));
     const shake = shakeAmount(sim.settings.shutter, sim.settings.tripod);
@@ -796,8 +898,10 @@ export function buildApp(root: HTMLElement, language: Language): void {
       const amplitude = 1 + shake * 7;
       const x = Math.sin(elapsed * 0.0045) * amplitude + Math.sin(elapsed * 0.008) * amplitude * 0.28;
       const y = Math.cos(elapsed * 0.0055) * amplitude * 0.68;
+      if (!shakeLogged) { shakeLogged = true; journal('viseur-tremblement', { actif: true, intensite: +shake.toFixed(2), zoom: 1.04 }); }
       view.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) scale(1.04)`;
     } else {
+      if (shakeLogged) { shakeLogged = false; journal('viseur-tremblement', { actif: false }); }
       view.style.transform = '';
     }
   }
@@ -856,6 +960,30 @@ export function buildApp(root: HTMLElement, language: Language): void {
     saveText.textContent = copy.save;
   }
 
+  /* ------------------------------ diagnostic ------------------------------ */
+  function snapshot(): Record<string, unknown> {
+    const r = view.getBoundingClientRect();
+    const s = sim.settings;
+    return {
+      reglages: {
+        mode: s.mode, iso: s.iso, ouverture: s.aperture, vitesse: formatShutterValue(s.shutter),
+        lumiere: s.lighting, kelvin: s.temperatureK, distanceM: s.distance, focaleMm: s.focalLength,
+        trepied: s.tripod, miseAuPoint: s.focusDistance === null ? 'sujet' : +s.focusDistance.toFixed(2)
+      },
+      ecartIL: +sim.analysis().toFixed(2),
+      message: log.textContent,
+      viseur: { largeur: Math.round(r.width), hauteur: Math.round(r.height), transform: view.style.transform || 'aucune' },
+      fenetre: [window.innerWidth, window.innerHeight],
+      ...sim.debugInfo()
+    };
+  }
+  let reglageTimer: number | null = null;
+  function journalReglage(): void {
+    if (reglageTimer !== null) window.clearTimeout(reglageTimer);
+    // Un curseur qu'on fait glisser ne note que la position finale.
+    reglageTimer = window.setTimeout(() => { reglageTimer = null; journal('reglage', snapshot()); }, 400);
+  }
+
   /* synchronisation */
   function syncModes(): void {
     modeButtons.forEach((b, m) => b.classList.toggle('is-active', m === sim.settings.mode));
@@ -869,7 +997,8 @@ export function buildApp(root: HTMLElement, language: Language): void {
     }
     const { aperture, shutter } = sim.settings;
     dialNodes[1].hint.textContent = aperture <= 2.8 ? copy.bokeh : copy.depth;
-    dialNodes[2].hint.textContent = shutter <= 1 / 30 ? copy.motionBlur : copy.frozen;
+    // Vitesse lente (≥ 1/30 s) : le mouvement laisse une traînée.
+    dialNodes[2].hint.textContent = shutter >= 1 / 30 ? copy.motionBlur : copy.frozen;
   }
   function syncReadout(): void {
     const { aperture, shutter, iso } = sim.settings;
@@ -881,8 +1010,9 @@ export function buildApp(root: HTMLElement, language: Language): void {
     vfSideRight.innerHTML = `<sup>ISO</sup> ${iso}`;
   }
   function syncFocus(): void {
-    const focusX = clamp(sim.settings.focusX * SCENE_W, 28, SCENE_W - 28);
-    const focusY = clamp(sim.settings.focusY * SCENE_H, 28, SCENE_H - 42);
+    const af = sim.afScreen();
+    const focusX = clamp(af.x * SCENE_W, 28, SCENE_W - 28);
+    const focusY = clamp(af.y * SCENE_H, 28, SCENE_H - 42);
     const focusXPct = (focusX / SCENE_W) * 100;
     const focusPct = (focusY / SCENE_H) * 100;
     vfAf.style.left = `${focusXPct}%`;
@@ -977,6 +1107,7 @@ export function buildApp(root: HTMLElement, language: Language): void {
       label: `${MODE_LABELS[s.mode]} · ${formatFocal(s.focalLength)} · ${formatAperture(s.aperture)} · ${formatShutterValue(s.shutter)} · ISO${s.iso} · ${formatDistance(s.distance)}`
     };
     shots.push(shot);
+    journal('photo', { ...snapshot(), legende: shot.label });
     selectedShot = shot;
     refreshGallery();
     syncAll();
@@ -989,6 +1120,7 @@ export function buildApp(root: HTMLElement, language: Language): void {
       const x = (ev.clientX - rect.left) / rect.width;
       const y = (ev.clientY - rect.top) / rect.height;
       sim.setFocusAt(x, y, sim.isOnSubject(x, y));
+      journal('mise-au-point', { x: +x.toFixed(3), y: +y.toFixed(3), distanceVisee: +sim.depthAt(x, y).toFixed(2) });
       return;
     }
     selectedShot = null;
@@ -1049,10 +1181,12 @@ export function buildApp(root: HTMLElement, language: Language): void {
     // un curseur ne déclenche pas un rendu par événement.
     sim.clearStaticCache();
     syncAll();
+    journalReglage();
   });
 
-  loadSceneImages().then(() => {
+  loadPhotoScenes().then(() => {
     syncAll();
+    window.setTimeout(() => journal('demarrage', snapshot()), 600);
     requestAnimationFrame(tick);
   });
 }
