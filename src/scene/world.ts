@@ -1,4 +1,4 @@
-import type { SimSettings } from '../camera/exposure';
+import { kelvinLevel, type SimSettings } from '../camera/exposure';
 import { renderSceneLayers } from './images';
 
 export const SENSOR_WIDTH_MM = 36;
@@ -85,7 +85,7 @@ export function renderScene(opts: RenderOptions): SceneLayers {
       focal: settings.focalLength,
       distance: settings.distance,
       shutter: settings.shutter,
-      lighting: settings.lighting,
+      kelvinLevel: kelvinLevel(settings.temperatureK),
       elapsed
     },
     animate

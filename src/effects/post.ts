@@ -14,9 +14,11 @@ export interface BlurRadii {
 }
 
 export interface PostParams {
-  /** ratio d'exposition (1 = correct) */
+  /** ratio d'exposition (1 = correct, 2 = +1 IL, 0,5 = −1 IL) */
   exposure: number;
   iso: number;
+  /** Température de couleur de la lumière (K) ; la balance des blancs reste fixe à 5 500 K. */
+  temperatureK: number;
   /** 0..1 flou de bougé (sans trépied) */
   shakeAmount: number;
   /** 0..1 filé du sujet */
@@ -242,31 +244,92 @@ export function compositeScene(layers: SceneLayers, blur: BlurRadii, includeMid 
 
 /* ------------------------------ Post-processing -------------------------- */
 
-function applyExposure(img: HTMLCanvasElement, exposure: number): HTMLCanvasElement {
-  const e = clamp(exposure, 0.1, 2.6);
+/* ---------------------- lumière linéaire & couleur ---------------------- */
+
+const SRGB_TO_LINEAR = new Float32Array(256);
+for (let v = 0; v < 256; v++) {
+  const c = v / 255;
+  SRGB_TO_LINEAR[v] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+
+/**
+ * Épaule des hautes lumières : linéaire jusqu'à 90 %, puis approche douce du
+ * blanc. Les zones très surexposées finissent bien brûlées, sans les aplats
+ * colorés d'un écrêtage brutal canal par canal.
+ */
+function highlightShoulder(l: number): number {
+  const knee = 0.9;
+  if (l <= knee) return l;
+  const room = 1 - knee;
+  return knee + room * (1 - Math.exp(-(l - knee) / room));
+}
+
+function linearToSrgb8(linear: number): number {
+  const l = highlightShoulder(linear);
+  const c = l <= 0.0031308 ? l * 12.92 : 1.055 * Math.pow(l, 1 / 2.4) - 0.055;
+  return Math.round(clamp(c, 0, 1) * 255);
+}
+
+/** Couleur approximative d'un corps noir (K → RGB sRGB 0..255), d'après Tanner Helland. */
+export function kelvinToRgb(kelvin: number): [number, number, number] {
+  const t = clamp(kelvin, 1000, 40000) / 100;
+  const r = t <= 66 ? 255 : 329.698727446 * Math.pow(t - 60, -0.1332047592);
+  const g = t <= 66
+    ? 99.4708025861 * Math.log(t) - 161.1195681661
+    : 288.1221695283 * Math.pow(t - 60, -0.0755148492);
+  const b = t >= 66 ? 255 : t <= 19 ? 0 : 138.5177312231 * Math.log(t - 10) - 305.0447927307;
+  return [clamp(r, 0, 255), clamp(g, 0, 255), clamp(b, 0, 255)];
+}
+
+/** Balance des blancs de l'appareil : réglée sur la lumière du jour. */
+export const CAMERA_WHITE_BALANCE_K = 5500;
+
+/**
+ * Gains RVB (en lumière linéaire) d'une scène éclairée à `kelvin` vue par un
+ * appareil réglé sur la lumière du jour : bougie → orangé, ombre → bleuté.
+ * Les gains sont normalisés pour ne pas modifier la luminance globale.
+ */
+export function whiteBalanceGains(kelvin: number): [number, number, number] {
+  const light = kelvinToRgb(kelvin);
+  const ref = kelvinToRgb(CAMERA_WHITE_BALANCE_K);
+  // Atténuation (en log) : une dominante lisible sans éteindre un canal entier.
+  const strength = 0.75;
+  const gains = light.map((v, i) => {
+    const ratio = Math.max(SRGB_TO_LINEAR[Math.round(v)], 0.02) / SRGB_TO_LINEAR[Math.round(ref[i])];
+    return Math.exp(strength * Math.log(ratio));
+  }) as [number, number, number];
+  const luminance = gains[0] * 0.2126 + gains[1] * 0.7152 + gains[2] * 0.0722;
+  return [gains[0] / luminance, gains[1] / luminance, gains[2] / luminance];
+}
+
+/**
+ * Exposition et couleur en lumière linéaire : chaque IL double la lumière,
+ * et ce qui dépasse le blanc est écrêté (hautes lumières brûlées), comme sur
+ * un capteur réel. À 0 IL et 5 500 K, l'image est quasiment inchangée.
+ */
+function applyExposure(img: HTMLCanvasElement, exposure: number, temperatureK: number): HTMLCanvasElement {
+  const stops = clamp(Math.log2(Math.max(exposure, 1e-6)), -6, 6);
+  const gain = Math.pow(2, stops);
+  const wb = whiteBalanceGains(temperatureK);
+  const luts = wb.map((channelGain) => {
+    const lut = new Uint8ClampedArray(256);
+    for (let v = 0; v < 256; v++) lut[v] = linearToSrgb8(SRGB_TO_LINEAR[v] * gain * channelGain);
+    return lut;
+  });
+
   const out = makeCanvas(img.width, img.height);
   const ctx = ctx2d(out);
   ctx.drawImage(img, 0, 0);
   const id = ctx.getImageData(0, 0, out.width, out.height);
   const d = id.data;
-
+  const [lr, lg, lb] = luts;
   for (let i = 0; i < d.length; i += 4) {
-    d[i] = tone(d[i], e);
-    d[i + 1] = tone(d[i + 1], e);
-    d[i + 2] = tone(d[i + 2], e);
+    d[i] = lr[d[i]];
+    d[i + 1] = lg[d[i + 1]];
+    d[i + 2] = lb[d[i + 2]];
   }
   ctx.putImageData(id, 0, 0);
   return out;
-}
-
-/** Courbe de ton à épaule douce : préserve mieux les couleurs dans les hautes lumières. */
-function tone(c: number, exposure: number): number {
-  const v = c / 255;
-  // À l'exposition correcte (e = 1), la courbe est strictement neutre.
-  // Au-delà, les hautes lumières montent progressivement vers le blanc au
-  // lieu d'écrêter brutalement chaque canal (origine des dominantes cyan).
-  const mapped = (v * exposure) / (1 + (exposure - 1) * v);
-  return Math.round(clamp(mapped * 255, 0, 255));
 }
 
 function addGrain(img: HTMLCanvasElement, iso: number): HTMLCanvasElement {
@@ -279,12 +342,13 @@ function addGrain(img: HTMLCanvasElement, iso: number): HTMLCanvasElement {
   const d = id.data;
   const chroma = amp * 0.28;
   for (let i = 0; i < d.length; i += 4) {
-    const n = (Math.random() - 0.5) * 2;
-    d[i] = clamp(d[i] + n * amp, 0, 255);
-    d[i + 1] = clamp(d[i + 1] + n * amp * 0.8, 0, 255);
-    const chromaN = (Math.random() - 0.5) * 2;
-    d[i] = clamp(d[i] + chromaN * chroma, 0, 255);
-    d[i + 2] = clamp(d[i + 2] + chromaN * chroma, 0, 255);
+    // Bruit de luminance identique sur les trois canaux (aucune dominante),
+    // plus un léger bruit chromatique rouge/bleu en opposition.
+    const n = (Math.random() - 0.5) * 2 * amp;
+    const c = (Math.random() - 0.5) * 2 * chroma;
+    d[i] = d[i] + n + c;
+    d[i + 1] = d[i + 1] + n;
+    d[i + 2] = d[i + 2] + n - c;
   }
   ctx.putImageData(id, 0, 0);
   return out;
@@ -337,7 +401,7 @@ function vignette(img: HTMLCanvasElement, exposure: number): HTMLCanvasElement {
 
 /** Pipeline complet : exposition -> grain -> bougé -> vignettage. */
 export function postProcess(img: HTMLCanvasElement, p: PostParams): HTMLCanvasElement {
-  let out = applyExposure(img, p.exposure);
+  let out = applyExposure(img, p.exposure, p.temperatureK);
   out = addGrain(out, p.iso);
   if (p.shakeAmount > 0.02) out = shakeBlur(out, p.shakeAmount);
   out = vignette(out, p.exposure);
@@ -347,42 +411,6 @@ export function postProcess(img: HTMLCanvasElement, p: PostParams): HTMLCanvasEl
 /** Formatte un ratio d'exposition en crans IL. */
 export function ratioToStops(ratio: number): number {
   return log2(ratio);
-}
-
-/**
- * Éclairage + température de couleur, appliqués en direct à la scène.
- * ratio = luminosité relative (1 = scène de référence), tempK = température en Kelvin.
- */
-export function gradeScene(img: HTMLCanvasElement, ratio: number, tempK: number): HTMLCanvasElement {
-  const out = makeCanvas(img.width, img.height);
-  const ctx = ctx2d(out);
-  ctx.drawImage(img, 0, 0);
-  ctx.save();
-  ctx.globalCompositeOperation = 'source-atop';
-
-  if (ratio < 1) {
-    // assombrir la scène quand la lumière baisse
-    ctx.globalAlpha = clamp(1 - ratio, 0, 0.96);
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, out.width, out.height);
-  } else if (ratio > 1) {
-    // éclaircir quand l'exposition est généreuse
-    ctx.globalAlpha = clamp((ratio - 1) * 0.75, 0, 0.92);
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(0, 0, out.width, out.height);
-  }
-
-  // température de couleur : chaud (< 5200 K) ou froid (> 5200 K)
-  if (tempK < 5200) {
-    ctx.globalAlpha = clamp((5200 - tempK) / 3200, 0, 1) * 0.22;
-    ctx.fillStyle = '#f29534';
-  } else {
-    ctx.globalAlpha = clamp((tempK - 5200) / 2800, 0, 1) * 0.26;
-    ctx.fillStyle = '#3f6fd8';
-  }
-  ctx.fillRect(0, 0, out.width, out.height);
-  ctx.restore();
-  return out;
 }
 
 export function stopsToLabel(stops: number): string {

@@ -15,8 +15,11 @@
  */
 
 export const SCENE_IMG_BASE = 'scene';
-/** Focale de référence : distance à laquelle le recadrage du fond est 1:1. */
-export const REF_FOCAL_MM = 28;
+/**
+ * Focale de référence : à cette focale (la plus courte proposée), l'image
+ * maître est montrée entière. Chaque focale plus longue la recadre.
+ */
+export const REF_FOCAL_MM = 24;
 /** Distance de référence : cadrage maître à 5 m. */
 export const REF_DIST_M = 5;
 

@@ -6,7 +6,9 @@ import {
   formatDistance,
   formatFocal,
   formatShutter,
+  kelvinLevel,
   kelvinStop,
+  LIGHT_LEVELS,
   lightingLabels,
   meterDelta,
   resolveEffective,
@@ -14,10 +16,10 @@ import {
   type SimConfig,
   type SimSettings
 } from './camera/exposure';
-import { computeBlurRadii, compositeScene, gradeScene, motionAmount, postProcess, shakeAmount } from './effects/post';
+import { computeBlurRadii, compositeScene, motionAmount, postProcess, shakeAmount } from './effects/post';
 import { animPose, bakeAnimatedSprite, drawAnimatedSprite, loadSceneImages } from './scene/images';
 import { makeCanvas } from './scene/objects';
-import { renderScene } from './scene/world';
+import { renderScene, type SceneLayers } from './scene/world';
 import { REF_FOCAL_MM } from './scene/sceneConfig';
 
 // Plein format 24 × 36 mm : ratio 3:2.
@@ -29,7 +31,7 @@ export type Language = 'fr' | 'en';
 const COPY = {
   fr: {
     tagline: 'Simulateur photographique — la scène, notre image.',
-    scene: 'Échelle de Kelvin', light: 'Températures', temperature: 'Température de couleur',
+    scene: 'Lumière de la scène', light: 'Luminosité', temperature: 'Température de couleur',
     lens: 'Objectif', distance: 'Distance au sujet', focal: 'Focale (zoom)',
     series: 'Série', tripod: 'Trépied (stabilise l’image)', capture: 'Déclencher', shortcut: 'ou appuyer sur Espace',
     save: 'Sauvegarder l’image', gallery: 'Photos prises', galleryHint: 'cliquez pour agrandir · ✕ pour supprimer',
@@ -43,7 +45,7 @@ const COPY = {
   },
   en: {
     tagline: 'Photography simulator — the scene, our image.',
-    scene: 'Kelvin scale', light: 'Temperatures', temperature: 'Colour temperature',
+    scene: 'Scene light', light: 'Brightness', temperature: 'Colour temperature',
     lens: 'Lens', distance: 'Subject distance', focal: 'Focal length (zoom)',
     series: 'Series', tripod: 'Tripod (stabilizes the image)', capture: 'Capture', shortcut: 'or press Space',
     save: 'Save image', gallery: 'Captured photos', galleryHint: 'click to enlarge · ✕ to delete',
@@ -91,14 +93,15 @@ export class Simulator {
   }
 
   setLighting(v: number): void {
+    // La luminosité ne modifie que l'IL de la scène, jamais sa couleur.
     this.settings.lighting = clamp(Math.round(v), 1, 9);
-    this.settings.temperatureK = kelvinStop(this.settings.lighting).kelvin;
     this.applyAuto();
     this.emitChange();
   }
 
   setTemperatureK(v: number): void {
-    this.settings.temperatureK = clamp(Math.round(v), 2000, 8000);
+    // La couleur de la lumière ne change pas l'exposition.
+    this.settings.temperatureK = clamp(Math.round(v), this.config.temperatureRange.min, this.config.temperatureRange.max);
     this.emitChange();
   }
 
@@ -115,7 +118,9 @@ export class Simulator {
     // Trois tiers lisibles : loin en haut, intermédiaire au centre, proche
     // en bas. Le sujet reste visible : on évite le flou brutal d'un rendu
     // purement théorique dans un viseur électronique.
-    this.settings.focusDistance = onSubject ? null : 30 - 31.5 * this.settings.focusY;
+    // Haut du viseur → 30 m, bas du viseur → 0,5 m (jamais de distance nulle ou négative).
+    const t = (this.settings.focusY - 0.04) / 0.92;
+    this.settings.focusDistance = onSubject ? null : clamp(30 - 29.5 * t, 0.5, 30);
     this.emitChange();
   }
 
@@ -171,68 +176,88 @@ export class Simulator {
     return renderScene({ settings: this.settings, width: SCENE_W, height: SCENE_H, seed: 7, animate });
   }
 
-  private staticKey = '';
-  private staticCanvas: HTMLCanvasElement | null = null;
-  private staticBlur = 0;
+  private layersKey = '';
+  private layersCache: SceneLayers | null = null;
+  private liveKey = '';
+  private liveCanvas: HTMLCanvasElement | null = null;
   private bakedAnim: HTMLCanvasElement | null = null;
   private bakeKey = '';
 
-  /** Invalide le cache du décor statique (après un changement de réglage). */
+  /** Invalide les caches du viseur (après un changement de réglage). */
   clearStaticCache(): void {
-    this.staticKey = '';
+    this.liveKey = '';
     this.bakeKey = '';
   }
 
-  /** Aperçu de validation : l'image maître est montrée brute et nette. */
+  /** Calques statiques de la scène, mémoïsés tant que le cadrage ne change pas. */
+  private staticLayers(): SceneLayers {
+    const s = this.settings;
+    const key = `${s.focalLength}|${s.distance.toFixed(2)}|${s.temperatureK}|${s.aperture}|${s.focusY.toFixed(3)}|${s.focusDistance ?? 'subject'}`;
+    if (!this.layersCache || this.layersKey !== key) {
+      this.layersCache = this.renderScene(false);
+      this.layersKey = key;
+    }
+    return this.layersCache;
+  }
+
+  /** Le point (fractions du cadre) tombe-t-il sur le sujet ? Sert au clic de mise au point. */
+  isOnSubject(x: number, y: number): boolean {
+    const subject = this.staticLayers().subject;
+    const px = clamp(Math.round(x * SCENE_W), 0, SCENE_W - 1);
+    const py = clamp(Math.round(y * SCENE_H), 0, SCENE_H - 1);
+    return subject.getContext('2d')!.getImageData(px, py, 1, 1).data[3] > 32;
+  }
+
+  /**
+   * Viseur électronique : simulation de l'image réelle (profondeur de champ,
+   * exposition, température de couleur, grain). Le bougé est montré à part,
+   * par le tremblement du viseur.
+   */
   renderPreview(elapsed: number): HTMLCanvasElement {
-    const { focalLength, aperture, distance } = this.settings;
-    const key = `${focalLength}|${aperture}|${distance.toFixed(2)}|${this.settings.lighting}|${this.settings.focusY.toFixed(3)}|${this.settings.focusDistance ?? 'subject'}`;
-    if (this.staticKey !== key) {
-      const layers = this.renderScene(false);
-      // Pendant la validation des fonds, aucun effet photo ne doit dégrader
-      // l'image maître : pas de profondeur de champ, exposition ou grain.
-      this.staticCanvas = makeCanvas(SCENE_W, SCENE_H);
-      const staticCtx = this.staticCanvas.getContext('2d')!;
-      staticCtx.drawImage(layers.far, 0, 0);
-      staticCtx.drawImage(layers.nearBg, 0, 0);
-      staticCtx.drawImage(layers.subject, 0, 0);
-      this.staticBlur = 0;
-      this.staticKey = key;
+    const s = this.settings;
+    const layers = this.staticLayers();
+    const key = `${this.layersKey}|${s.shutter}|${s.iso}|${s.lighting}`;
+    if (!this.liveCanvas || this.liveKey !== key) {
+      const composed = compositeScene(layers, computeBlurRadii(layers), false);
+      this.liveCanvas = postProcess(composed, {
+        exposure: exposureRatio(s.aperture, s.shutter, s.iso, s.lighting),
+        iso: s.iso,
+        temperatureK: s.temperatureK,
+        shakeAmount: 0,
+        motionAmount: 0
+      });
+      this.liveKey = key;
     }
 
-    const bakeKey = `${focalLength}|${distance.toFixed(2)}|${this.staticBlur.toFixed(1)}`;
+    const bakeKey = `${s.focalLength}|${s.distance.toFixed(2)}`;
     if (this.bakeKey !== bakeKey) {
-      this.bakedAnim = bakeAnimatedSprite(elapsed, SCENE_W, SCENE_H, focalLength, distance, this.staticBlur, this.settings.shutter);
+      this.bakedAnim = bakeAnimatedSprite(elapsed, SCENE_W, SCENE_H, s.focalLength, s.distance, 0, s.shutter);
       this.bakeKey = bakeKey;
     }
+    if (!this.bakedAnim) return this.liveCanvas;
 
+    // Élément animé superposé au rendu (calque `mid`, s'il est configuré).
     const out = makeCanvas(SCENE_W, SCENE_H);
     const ctx = out.getContext('2d')!;
-    ctx.drawImage(this.staticCanvas!, 0, 0);
-    if (this.bakedAnim) {
-      const pose = animPose(elapsed, SCENE_W, SCENE_H, focalLength, distance, this.settings.shutter);
-      drawAnimatedSprite(ctx, pose, this.bakedAnim);
-    }
+    ctx.drawImage(this.liveCanvas, 0, 0);
+    drawAnimatedSprite(ctx, animPose(elapsed, SCENE_W, SCENE_H, s.focalLength, s.distance, s.shutter), this.bakedAnim);
     return out;
   }
 
   /** Prise de vue complète (élément animé figé + bougé + vitesse lente). */
-  capture(elapsed: number): HTMLCanvasElement {
+  capture(_elapsed: number): HTMLCanvasElement {
+    const s = this.settings;
     const layers = this.renderScene(true);
-    const blur = computeBlurRadii(layers);
-    const motion = motionAmount(this.settings.shutter);
-    const composed = compositeScene(layers, blur);
-    const ratio = exposureRatio(this.settings.aperture, this.settings.shutter, this.settings.iso, this.settings.lighting);
-    const shake = shakeAmount(this.settings.shutter, this.settings.tripod);
+    const composed = compositeScene(layers, computeBlurRadii(layers));
     const final = postProcess(composed, {
-      exposure: ratio,
-      iso: this.settings.iso,
-      shakeAmount: shake,
-      motionAmount: motion
+      exposure: exposureRatio(s.aperture, s.shutter, s.iso, s.lighting),
+      iso: s.iso,
+      temperatureK: s.temperatureK,
+      shakeAmount: shakeAmount(s.shutter, s.tripod),
+      motionAmount: motionAmount(s.shutter)
     });
-    const graded = gradeScene(final, 1, 5600);
-    this.lastShot = graded;
-    return graded;
+    this.lastShot = final;
+    return final;
   }
 }
 
@@ -370,9 +395,7 @@ function formatShutterValue(t: number): string {
 export function buildApp(root: HTMLElement, language: Language): void {
   const cfg = defaultConfig();
   const sim = new Simulator(cfg);
-  const labels = language === 'en'
-    ? { 1: 'Candle', 2: 'Incandescent bulb', 3: 'Sunrise / sunset', 4: 'Moonlight', 5: 'Morning / afternoon', 6: 'Daylight', 7: 'Bright sun', 8: 'Overcast sky', 9: 'Misty sky' }
-    : lightingLabels();
+  const lightLabels = lightingLabels(language);
   const copy = COPY[language];
 
   /* -------------------------------- header -------------------------------- */
@@ -594,20 +617,27 @@ export function buildApp(root: HTMLElement, language: Language): void {
   const lightSlider = buildSlider({
     label: copy.light,
     fmt: (v) => {
-      const stop = kelvinStop(v);
-      return `${stop.kelvin.toLocaleString(language === 'fr' ? 'fr-FR' : 'en-US')} K`;
+      const level = Math.round(clamp(v, 1, 9));
+      return `${lightLabels[level]} · IL ${LIGHT_LEVELS[level].ev}`;
     },
     min: cfg.lightingRange.min, max: cfg.lightingRange.max, step: cfg.lightingRange.step,
     get: () => sim.settings.lighting,
     set: (v) => sim.setLighting(v),
     isActive: () => true
   });
+  const tempSlider = buildSlider({
+    label: copy.temperature,
+    fmt: (v) => `${kelvinStop(v).kelvin.toLocaleString(language === 'fr' ? 'fr-FR' : 'en-US')} K`,
+    min: 1, max: 9, step: 1,
+    get: () => kelvinLevel(sim.settings.temperatureK),
+    set: (v) => sim.setTemperatureK(kelvinStop(v).kelvin),
+    isActive: () => true
+  });
   const kelvinMood = el('div', 'kelvin-mood');
   const kelvinMoodIcon = el('span', 'kelvin-mood__icon');
   const kelvinMoodLabel = el('span', 'kelvin-mood__label');
   kelvinMood.append(kelvinMoodIcon, kelvinMoodLabel);
-  // L'échelle Kelvin est désormais intégrée au curseur de température ci-dessus.
-  sceneSec.append(lightSlider.wrap, kelvinMood);
+  sceneSec.append(lightSlider.wrap, tempSlider.wrap, kelvinMood);
   panel.append(sceneSec);
 
   const lensSec = el('div', 'panel__section');
@@ -869,6 +899,11 @@ export function buildApp(root: HTMLElement, language: Language): void {
       const d = Math.round(clamp(sim.analysis(), -3, 3));
       log.textContent =
         d > 0 ? `${copy.over} ${d} IL` : d < 0 ? `${copy.under} ${Math.abs(d)} IL` : copy.exposureOk;
+    } else if (Math.abs(Math.round(sim.analysis())) >= 1) {
+      // Mode automatique hors plage : l'appareil ne peut pas compenser.
+      const d = Math.round(clamp(sim.analysis(), -3, 3));
+      const limit = language === 'fr' ? 'limite atteinte' : 'limit reached';
+      log.textContent = `${d > 0 ? copy.over : copy.under} ${Math.abs(d)} IL · ${limit}`;
     } else {
       const hints: Record<Exclude<CameraMode, 'manual'>, string> = {
         program: copy.program,
@@ -879,9 +914,9 @@ export function buildApp(root: HTMLElement, language: Language): void {
     }
   }
   function syncKelvinMood(): void {
-    const level = Math.round(clamp(sim.settings.lighting, 1, 9));
+    const level = kelvinLevel(sim.settings.temperatureK);
     const stop = kelvinStop(level);
-    const label = labels[level] ?? stop.label;
+    const label = language === 'en' ? stop.labelEn : stop.label;
     kelvinMoodIcon.innerHTML = `<img src="${import.meta.env.BASE_URL}kelvin/${level}.png" alt="" />`;
     kelvinMoodLabel.textContent = label;
     kelvinMood.classList.toggle('is-empty', !stop.icon && !label);
@@ -946,16 +981,9 @@ export function buildApp(root: HTMLElement, language: Language): void {
     if (ev.target === liveBtn) return;
     if (!selectedShot) {
       const rect = view.getBoundingClientRect();
-      const x = ((ev.clientX - rect.left) / rect.width) * SCENE_W;
-      const y = ((ev.clientY - rect.top) / rect.height) * SCENE_H;
-      const layers = sim.renderScene(false);
-      const pixel = layers.subject.getContext('2d')!.getImageData(
-        clamp(Math.round(x), 0, SCENE_W - 1),
-        clamp(Math.round(y), 0, SCENE_H - 1),
-        1,
-        1
-      ).data;
-      sim.setFocusAt(x / SCENE_W, y / SCENE_H, pixel[3] > 32);
+      const x = (ev.clientX - rect.left) / rect.width;
+      const y = (ev.clientY - rect.top) / rect.height;
+      sim.setFocusAt(x, y, sim.isOnSubject(x, y));
       return;
     }
     selectedShot = null;
@@ -969,6 +997,10 @@ export function buildApp(root: HTMLElement, language: Language): void {
       return;
     }
     if (ev.code === 'Space' || ev.key === ' ') {
+      // Espace garde son rôle normal sur un bouton, une case ou un curseur.
+      const target = ev.target as HTMLElement | null;
+      if (target?.closest('button, input, select, textarea, summary, [contenteditable]')) return;
+      if (lightbox.classList.contains('is-open') || ev.repeat) return;
       ev.preventDefault();
       waitUntilUnfrozen(() => releaseShutter(performance.now()));
     }
@@ -1008,8 +1040,9 @@ export function buildApp(root: HTMLElement, language: Language): void {
   }
 
   sim.onChange(() => {
-    sim.clearStaticCache?.();
-    simulateLiveDraw(performance.now());
+    // Le rendu complet est recalculé au prochain tick de la boucle : glisser
+    // un curseur ne déclenche pas un rendu par événement.
+    sim.clearStaticCache();
     syncAll();
   });
 

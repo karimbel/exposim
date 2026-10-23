@@ -131,8 +131,8 @@ export interface LayerRenderOptions {
   shutter: number;
   /** Temps écoulé (ms) — pilote l'élément animé. */
   elapsed: number;
-  /** Cran actif sur l'échelle Kelvin. */
-  lighting: number;
+  /** Cran actif sur l'échelle Kelvin (1 .. 9) : choix des variantes d'images. */
+  kelvinLevel: number;
 }
 
 export interface LayerRenderResult {
@@ -270,7 +270,7 @@ export function bakeAnimatedSprite(elapsed: number, width: number, height: numbe
 
 /** Rend les 4 couches de scène (far, mid, subject, fg) à partir des images de configuration. */
 export function renderSceneLayers(opts: LayerRenderOptions, animateMid: boolean): LayerRenderResult {
-  const { width, height, focal, distance, shutter, elapsed, lighting } = opts;
+  const { width, height, focal, distance, shutter, elapsed, kelvinLevel } = opts;
   const zoom = focal / REF_FOCAL_MM;
   // S'éloigner réduit la taille apparente du sujet ; se rapprocher l'augmente.
   const distFactor = REF_DIST_M / distance;
@@ -282,13 +282,13 @@ export function renderSceneLayers(opts: LayerRenderOptions, animateMid: boolean)
 
   const far = makeCanvas(width, height);
   const farCtx = ctx2d(far);
-  const bgFile = KELVIN_BACKGROUNDS[Math.round(lighting)] ?? DEFAULT_BACKGROUND;
+  const bgFile = KELVIN_BACKGROUNDS[kelvinLevel] ?? DEFAULT_BACKGROUND;
   const bgImg = cache.get(bgFile) ?? null;
 
   if (bgImg) {
-    // Validation de l'image maître : elle remplit exactement le viseur, sans
-    // recadrage optique lié à la focale ou à la distance.
-    coverDraw(farCtx, bgImg, width, height);
+    // Même recadrage optique que le sujet : décor et personnages restent
+    // alignés pixel pour pixel quelles que soient la focale et la distance.
+    focalCropDraw(farCtx, bgImg, width, height, distanceFocal);
   } else {
     // décor absent : aplati neutre (aucun objet vectoriel procédural)
     farCtx.fillStyle = '#141b26';
@@ -314,14 +314,14 @@ export function renderSceneLayers(opts: LayerRenderOptions, animateMid: boolean)
 
   const nearBg = makeCanvas(width, height);
   const nearCfg = SCENE_LAYERS.find((c) => c.key === 'nearBg');
-  const landscapeFile = KELVIN_LANDSCAPES[Math.round(lighting)];
+  const landscapeFile = KELVIN_LANDSCAPES[kelvinLevel];
   const nearImg = landscapeFile
     ? (cache.get(landscapeFile) ?? null)
     : (nearCfg ? layerCanvas(nearCfg) : null);
   if (nearCfg && nearImg) {
     const nearCtx = ctx2d(nearBg);
     focalCropDraw(nearCtx, nearImg, width, height, distanceFocal);
-    const tint = LANDSCAPE_TINTS[Math.round(lighting)];
+    const tint = LANDSCAPE_TINTS[kelvinLevel];
     if (tint) {
       nearCtx.save();
       nearCtx.globalCompositeOperation = 'source-atop';
@@ -332,7 +332,7 @@ export function renderSceneLayers(opts: LayerRenderOptions, animateMid: boolean)
     }
     // À 9 000 K, seule une brume légère voile le sommet du relief :
     // la géométrie et le cadrage restent strictement ceux du calque maître.
-    if (Math.round(lighting) === 9) {
+    if (kelvinLevel === 9) {
       const mist = nearCtx.createLinearGradient(0, height * 0.24, 0, height * 0.62);
       mist.addColorStop(0, 'rgba(221, 244, 246, 0)');
       mist.addColorStop(0.36, 'rgba(221, 244, 246, 0.14)');
@@ -348,7 +348,7 @@ export function renderSceneLayers(opts: LayerRenderOptions, animateMid: boolean)
   const subject = makeCanvas(width, height);
   const subjectCtx = ctx2d(subject);
   const subj = SCENE_LAYERS.find((c) => c.key === 'subject');
-  const subjectFile = KELVIN_SUBJECTS[Math.round(lighting)] ?? subj?.file;
+  const subjectFile = KELVIN_SUBJECTS[kelvinLevel] ?? subj?.file;
   const subjImg = subjectFile ? imageCanvas(subjectFile) : null;
   let subjectPxPerM = 0;
   let subjectFocusScreenY: number | null = null;
