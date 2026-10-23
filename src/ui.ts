@@ -946,9 +946,9 @@ export function buildApp(root: HTMLElement, language: Language): void {
   /** Photos cochées pour la comparaison (deux au plus). */
   const compareSel: Shot[] = [];
   let freezeUntil = 0;
-  /** Fin de la relecture de la photo prise (comme sur un appareil : ~2 s). */
+  /** Fin de la relecture de la photo prise (comme sur un appareil : 1 s). */
   let reviewUntil = 0;
-  const REVIEW_MS = 2000;
+  const REVIEW_MS = 1000;
   let lastHistogramAt = 0;
 
   function drawHistogram(c: HTMLCanvasElement): void {
@@ -1347,7 +1347,7 @@ export function buildApp(root: HTMLElement, language: Language): void {
     playShutterSound();
     selectedShot = null;
     view.style.transform = '';
-    freezeUntil = elapsed + 1400;
+    freezeUntil = elapsed + REVIEW_MS;
     view.classList.add('viewfinder__flash');
     window.setTimeout(() => view.classList.remove('viewfinder__flash'), 90);
 
