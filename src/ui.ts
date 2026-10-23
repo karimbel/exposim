@@ -1387,11 +1387,14 @@ export function buildApp(root: HTMLElement, language: Language): void {
       return;
     }
     if (ev.code === 'Space' || ev.key === ' ') {
-      // Espace garde son rôle normal sur un bouton, une case ou un curseur.
+      // Espace déclenche toujours, même juste après un clic sur un cadran,
+      // un curseur ou une case (sinon il réactiverait cet élément). Seuls
+      // les champs de saisie de texte gardent l'espace.
       const target = ev.target as HTMLElement | null;
-      if (target?.closest('button, input, select, textarea, summary, [contenteditable]')) return;
-      if (lightbox.classList.contains('is-open') || ev.repeat) return;
+      if (target?.closest('textarea, select, [contenteditable], input[type="text"], input[type="search"], input[type="number"]')) return;
       ev.preventDefault();
+      if (lightbox.classList.contains('is-open') || ev.repeat) return;
+      if (target && target !== document.body) target.blur();
       waitUntilUnfrozen(() => releaseShutter(performance.now()));
     }
   });
