@@ -31,6 +31,7 @@ import {
 } from './scene/photoScenes';
 import { makeCanvas } from './scene/objects';
 import { renderScene } from './scene/world';
+import { journal } from './debug/journal';
 import { REF_FOCAL_MM } from './scene/sceneConfig';
 
 // Plein format 24 × 36 mm : ratio 3:2.
@@ -270,6 +271,7 @@ export class Simulator {
     const s = this.settings;
     const f = this.photoFrame();
     const focusDisp = this.focusDisp();
+    const t0 = performance.now();
     const sharp = renderDepthOfField(f.plate, f.disp, focusDisp, s.aperture, s.focalLength);
     const exposure = exposureRatio(s.aperture, s.shutter, s.iso, s.lighting);
     const image = postProcess(sharp, { exposure, iso: s.iso, temperatureK: s.temperatureK, shakeAmount: 0, motionAmount: motion });
@@ -288,7 +290,23 @@ export class Simulator {
       }
       spinner = exposeLayer(src, exposure, s.temperatureK);
     }
+    this.lastRenderMs = Math.round(performance.now() - t0);
     return { image, spinner };
+  }
+
+  lastRenderMs = 0;
+
+  /** État interne utile au diagnostic (journal). */
+  debugInfo(): Record<string, unknown> {
+    const f = this.frame;
+    const sp = this.spinnerPose(performance.now());
+    return {
+      scene: this.scene().id,
+      cadrage: f ? { x: +f.crop.x.toFixed(4), y: +f.crop.y.toFixed(4), w: +f.crop.w.toFixed(4), h: +f.crop.h.toFixed(4) } : null,
+      miseAuPointM: +(1 / Math.max(this.focusDisp(), 1e-4)).toFixed(2),
+      moulinet: sp ? { x: Math.round(sp.cx), y: Math.round(sp.cy), taille: Math.round(sp.size), arcRad: +sp.arc.toFixed(3) } : null,
+      renduMs: this.lastRenderMs
+    };
   }
 
   /** Viseur électronique : rendu recalculé seulement quand un réglage change. */
@@ -654,6 +672,7 @@ export function buildApp(root: HTMLElement, language: Language): void {
     const scale = Math.max(0.01, Math.min(r.width / SCENE_W, r.height / SCENE_H));
     const w = Math.floor(SCENE_W * scale);
     if (w !== fitW) {
+      journal('redimensionnement', { avant: fitW, apres: w, scene: [Math.round(r.width), Math.round(r.height)] });
       fitW = w;
       viewfinder.style.width = `${w}px`;
     }
@@ -850,6 +869,7 @@ export function buildApp(root: HTMLElement, language: Language): void {
     simulateLiveDraw(elapsed);
   }
 
+  let shakeLogged = false;
   function simulateLiveDraw(elapsed: number): void {
     drawCanvas(sim.renderPreview(elapsed));
     const shake = shakeAmount(sim.settings.shutter, sim.settings.tripod);
@@ -858,8 +878,10 @@ export function buildApp(root: HTMLElement, language: Language): void {
       const amplitude = 1 + shake * 7;
       const x = Math.sin(elapsed * 0.0045) * amplitude + Math.sin(elapsed * 0.008) * amplitude * 0.28;
       const y = Math.cos(elapsed * 0.0055) * amplitude * 0.68;
+      if (!shakeLogged) { shakeLogged = true; journal('viseur-tremblement', { actif: true, intensite: +shake.toFixed(2), zoom: 1.04 }); }
       view.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) scale(1.04)`;
     } else {
+      if (shakeLogged) { shakeLogged = false; journal('viseur-tremblement', { actif: false }); }
       view.style.transform = '';
     }
   }
@@ -918,6 +940,30 @@ export function buildApp(root: HTMLElement, language: Language): void {
     saveText.textContent = copy.save;
   }
 
+  /* ------------------------------ diagnostic ------------------------------ */
+  function snapshot(): Record<string, unknown> {
+    const r = view.getBoundingClientRect();
+    const s = sim.settings;
+    return {
+      reglages: {
+        mode: s.mode, iso: s.iso, ouverture: s.aperture, vitesse: formatShutterValue(s.shutter),
+        lumiere: s.lighting, kelvin: s.temperatureK, distanceM: s.distance, focaleMm: s.focalLength,
+        trepied: s.tripod, miseAuPoint: s.focusDistance === null ? 'sujet' : +s.focusDistance.toFixed(2)
+      },
+      ecartIL: +sim.analysis().toFixed(2),
+      message: log.textContent,
+      viseur: { largeur: Math.round(r.width), hauteur: Math.round(r.height), transform: view.style.transform || 'aucune' },
+      fenetre: [window.innerWidth, window.innerHeight],
+      ...sim.debugInfo()
+    };
+  }
+  let reglageTimer: number | null = null;
+  function journalReglage(): void {
+    if (reglageTimer !== null) window.clearTimeout(reglageTimer);
+    // Un curseur qu'on fait glisser ne note que la position finale.
+    reglageTimer = window.setTimeout(() => { reglageTimer = null; journal('reglage', snapshot()); }, 400);
+  }
+
   /* synchronisation */
   function syncModes(): void {
     modeButtons.forEach((b, m) => b.classList.toggle('is-active', m === sim.settings.mode));
@@ -931,7 +977,8 @@ export function buildApp(root: HTMLElement, language: Language): void {
     }
     const { aperture, shutter } = sim.settings;
     dialNodes[1].hint.textContent = aperture <= 2.8 ? copy.bokeh : copy.depth;
-    dialNodes[2].hint.textContent = shutter <= 1 / 30 ? copy.motionBlur : copy.frozen;
+    // Vitesse lente (≥ 1/30 s) : le mouvement laisse une traînée.
+    dialNodes[2].hint.textContent = shutter >= 1 / 30 ? copy.motionBlur : copy.frozen;
   }
   function syncReadout(): void {
     const { aperture, shutter, iso } = sim.settings;
@@ -1039,6 +1086,7 @@ export function buildApp(root: HTMLElement, language: Language): void {
       label: `${MODE_LABELS[s.mode]} · ${formatFocal(s.focalLength)} · ${formatAperture(s.aperture)} · ${formatShutterValue(s.shutter)} · ISO${s.iso} · ${formatDistance(s.distance)}`
     };
     shots.push(shot);
+    journal('photo', { ...snapshot(), legende: shot.label });
     selectedShot = shot;
     refreshGallery();
     syncAll();
@@ -1051,6 +1099,7 @@ export function buildApp(root: HTMLElement, language: Language): void {
       const x = (ev.clientX - rect.left) / rect.width;
       const y = (ev.clientY - rect.top) / rect.height;
       sim.setFocusAt(x, y, sim.isOnSubject(x, y));
+      journal('mise-au-point', { x: +x.toFixed(3), y: +y.toFixed(3), distanceVisee: +sim.depthAt(x, y).toFixed(2) });
       return;
     }
     selectedShot = null;
@@ -1111,10 +1160,12 @@ export function buildApp(root: HTMLElement, language: Language): void {
     // un curseur ne déclenche pas un rendu par événement.
     sim.clearStaticCache();
     syncAll();
+    journalReglage();
   });
 
   loadPhotoScenes().then(() => {
     syncAll();
+    window.setTimeout(() => journal('demarrage', snapshot()), 600);
     requestAnimationFrame(tick);
   });
 }
