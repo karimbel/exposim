@@ -11,11 +11,11 @@ export interface SimSettings {
   aperture: number;
   /** Vitesse d'obturation en secondes */
   shutter: number;
-  /** Position sur l'échelle Kelvin (1 .. 9), conserve aussi l'EV associé. */
+  /** Niveau de luminosité de la scène (1 .. 9), voir `LIGHT_LEVELS`. */
   lighting: number;
-  /** Température de couleur effective en Kelvin. */
+  /** Température de couleur de la lumière en Kelvin (1 000 .. 9 000), indépendante de la luminosité. */
   temperatureK: number;
-  /** Distance sujet <-> photographe en mètres (1 .. 6) */
+  /** Distance sujet <-> photographe en mètres (1 .. 5) */
   distance: number;
   /** Position verticale du collimateur dans le viseur (0 = haut, 1 = bas). */
   focusY: number;
@@ -47,7 +47,7 @@ export const DEFAULT_SETTINGS: SimSettings = {
   iso: 200,
   aperture: 5.6,
   shutter: 1 / 125,
-  lighting: 6,
+  lighting: 8,
   temperatureK: 6000,
   // Le cadrage maître du diorama correspond à la vue la plus large : 24 mm à 5 m.
   distance: 5,
@@ -65,38 +65,52 @@ export const SHUTTER_STOPS: number[] = [
   1 / 60, 1 / 30, 1 / 15, 1 / 8, 1 / 4, 1 / 2, 1, 2, 4, 8, 15, 30
 ];
 
-/** EV (exposition requise, équivalent ISO 100) par niveau de lumière de jauges de 1 à 9. */
-export const REQUIRED_EV: Record<number, number> = {
-  1: 2,   // bougie
-  2: 3,   // crépuscule profond
-  3: 4,   // nuit urbaine
-  4: 5,   // intérieur très sombre
-  5: 6,   // intérieur tamisé
-  6: 8,   // intérieur lumineux
-  7: 10,  // extérieur nuageux
-  8: 12,  // ciel couvert clair
-  9: 14   // soleil franc
+/**
+ * Luminosité de la scène : IL de scène (base ISO 100) par niveau, de 1 à 9.
+ * Valeurs usuelles des tables d'exposition (règle du « f/16 au soleil » = IL 15).
+ * Ce réglage est indépendant de la température de couleur.
+ */
+export const LIGHT_LEVELS: Record<number, { ev: number; fr: string; en: string }> = {
+  1: { ev: -2, fr: 'Pleine lune', en: 'Full moon' },
+  2: { ev: 2, fr: 'Crépuscule profond', en: 'Deep twilight' },
+  3: { ev: 4, fr: 'Feu de camp, bougie', en: 'Campfire, candlelight' },
+  4: { ev: 6, fr: 'Intérieur le soir', en: 'Indoors at night' },
+  5: { ev: 8, fr: 'Intérieur lumineux', en: 'Bright interior' },
+  6: { ev: 11, fr: 'Coucher de soleil', en: 'Sunset' },
+  7: { ev: 12, fr: 'Ciel très couvert', en: 'Heavy overcast' },
+  8: { ev: 14, fr: 'Soleil voilé', en: 'Hazy sun' },
+  9: { ev: 15, fr: 'Plein soleil', en: 'Full sun' }
 };
 
-/** Échelle de température présentée dans le panneau de scène. */
-export const KELVIN_STOPS: Record<number, { kelvin: number; label: string; icon: string }> = {
-  1: { kelvin: 1000, label: 'Bougie', icon: '🕯' },
-  2: { kelvin: 2000, label: 'Lampe incandescente', icon: '💡' },
-  3: { kelvin: 3000, label: 'Coucher / lever du soleil', icon: '🌅' },
-  4: { kelvin: 4000, label: 'Clair de lune', icon: '🌙' },
-  5: { kelvin: 5000, label: 'Matin / après-midi', icon: '☀️' },
-  6: { kelvin: 6000, label: 'Lumière du jour', icon: '☀️' },
-  7: { kelvin: 7000, label: 'Grand soleil', icon: '🌞' },
-  8: { kelvin: 8000, label: 'Ciel couvert', icon: '☁️' },
-  9: { kelvin: 9000, label: 'Ciel brumeux', icon: '☁️≋' }
+/** Compatibilité : IL requis par niveau de lumière. */
+export const REQUIRED_EV: Record<number, number> = Object.fromEntries(
+  Object.entries(LIGHT_LEVELS).map(([level, l]) => [Number(level), l.ev])
+);
+
+/** Échelle de température présentée dans le panneau de scène (crans 1 .. 9). */
+export const KELVIN_STOPS: Record<number, { kelvin: number; label: string; labelEn: string; icon: string }> = {
+  1: { kelvin: 1000, label: 'Bougie', labelEn: 'Candle', icon: '🕯' },
+  2: { kelvin: 2000, label: 'Lampe incandescente', labelEn: 'Incandescent bulb', icon: '💡' },
+  3: { kelvin: 3000, label: 'Coucher / lever du soleil', labelEn: 'Sunrise / sunset', icon: '🌅' },
+  4: { kelvin: 4000, label: 'Clair de lune', labelEn: 'Moonlight', icon: '🌙' },
+  5: { kelvin: 5000, label: 'Matin / après-midi', labelEn: 'Morning / afternoon', icon: '☀️' },
+  6: { kelvin: 6000, label: 'Lumière du jour', labelEn: 'Daylight', icon: '☀️' },
+  7: { kelvin: 7000, label: 'Grand soleil', labelEn: 'Bright sun', icon: '🌞' },
+  8: { kelvin: 8000, label: 'Ciel couvert', labelEn: 'Overcast sky', icon: '☁️' },
+  9: { kelvin: 9000, label: 'Ciel brumeux', labelEn: 'Misty sky', icon: '☁️≋' }
 };
 
-export function kelvinStop(level: number): { kelvin: number; label: string; icon: string } {
+export function kelvinStop(level: number): { kelvin: number; label: string; labelEn: string; icon: string } {
   return KELVIN_STOPS[Math.round(clamp(level, 1, 9))] ?? KELVIN_STOPS[6];
 }
 
-export function lightingLabels(): Record<number, string> {
-  return Object.fromEntries(Object.entries(KELVIN_STOPS).map(([level, stop]) => [Number(level), stop.label]));
+/** Cran Kelvin (1 .. 9) le plus proche d'une température donnée. */
+export function kelvinLevel(kelvin: number): number {
+  return Math.round(clamp(kelvin / 1000, 1, 9));
+}
+
+export function lightingLabels(language: 'fr' | 'en' = 'fr'): Record<number, string> {
+  return Object.fromEntries(Object.entries(LIGHT_LEVELS).map(([level, l]) => [Number(level), l[language]]));
 }
 
 /* ----------------------------- Math helpers ----------------------------- */
@@ -114,19 +128,25 @@ export function evOfLighting(lighting: number): number {
   return REQUIRED_EV[l];
 }
 
-/** EV réellement produit par la combinaison donnée, ramené à la sensibilité ISO. */
-export function deliveredEV(aperture: number, shutter: number, iso: number): number {
-  return log2((aperture * aperture) / shutter) + log2(iso / 100);
+/**
+ * IL de scène (base ISO 100) pour lequel la combinaison est correctement
+ * exposée : EV100 = log2(N² / t) − log2(ISO / 100).
+ * Fermer le diaphragme ou accélérer la vitesse l'augmente ; monter les ISO le
+ * diminue (il faut alors moins de lumière).
+ */
+export function settingsEV(aperture: number, shutter: number, iso: number): number {
+  return log2((aperture * aperture) / shutter) - log2(iso / 100);
 }
+
+/** @deprecated alias conservé pour l'API : utiliser `settingsEV`. */
+export const deliveredEV = settingsEV;
 
 /**
  * Ratio d'exposition: 1 = parfait.
  * > 1 : sur-exposé (image claire), < 1 : sous-exposé (image sombre).
  */
 export function exposureRatio(aperture: number, shutter: number, iso: number, lighting: number): number {
-  const req = evOfLighting(lighting);
-  const del = deliveredEV(aperture, shutter, iso);
-  return pow2(del - req);
+  return pow2(meterDelta(aperture, shutter, iso, lighting));
 }
 
 /**
@@ -134,20 +154,22 @@ export function exposureRatio(aperture: number, shutter: number, iso: number, li
  * 0 = expo correcte, positif = sur-exposition, négatif = sous-exposition.
  */
 export function meterDelta(aperture: number, shutter: number, iso: number, lighting: number): number {
-  return deliveredEV(aperture, shutter, iso) - evOfLighting(lighting);
+  return evOfLighting(lighting) - settingsEV(aperture, shutter, iso);
 }
 
 /* ------------------------- Résolution des modes ------------------------- */
 
 /** Ouverture requise pour atteindre l'expo cible avec une vitesse donnée. */
 export function apertureFor(shutter: number, iso: number, lighting: number): number {
-  const target = evOfLighting(lighting) - log2(iso / 100) + log2(shutter);
+  // N² = t · 2^(EV100 + log2(ISO/100))
+  const target = evOfLighting(lighting) + log2(iso / 100) + log2(shutter);
   return pow2(0.5 * target);
 }
 
 /** Vitesse requise pour atteindre l'expo cible avec une ouverture donnée. */
 export function shutterFor(aperture: number, iso: number, lighting: number): number {
-  const ev = evOfLighting(lighting) - log2(iso / 100);
+  // t = N² / 2^(EV100 + log2(ISO/100))
+  const ev = evOfLighting(lighting) + log2(iso / 100);
   return pow2(2 * log2(aperture) - ev);
 }
 
@@ -194,19 +216,14 @@ export function solveSettings(settings: SimSettings): ExposureSolution {
     }
     case 'program':
     default: {
-      // Ligne de programme : on cherche une combinaison équilibrée.
-      let t = 1 / 60;
-      let a = apertureFor(t, iso, lighting);
-      if (a < minA) {
-        a = minA;
-        t = shutterFor(a, iso, lighting);
-      } else if (a > maxA) {
-        a = maxA;
-        t = shutterFor(a, iso, lighting);
-      }
-      const snappedA = nearestStop(a, APERTURE_STOPS);
-      const t2 = shutterFor(snappedA, iso, lighting);
-      return { aperture: snappedA, shutter: nearestStop(clamp(t2, fastest, slowest), SHUTTER_STOPS) };
+      // Ligne de programme : Av = log2(N²), Tv = log2(1/t), Av + Tv = IL (à l'ISO choisi).
+      // En faible lumière on reste à pleine ouverture ; au-delà de 1/30 s, on
+      // ferme d'un demi-cran pour chaque cran gagné, comme un appareil réel.
+      const evAtIso = evOfLighting(lighting) + log2(iso / 100);
+      const av = clamp((evAtIso - 6) / 2 + 1, log2(minA * minA), log2(maxA * maxA));
+      const snappedA = nearestStop(Math.sqrt(pow2(av)), APERTURE_STOPS);
+      const t = shutterFor(snappedA, iso, lighting);
+      return { aperture: snappedA, shutter: nearestStop(clamp(t, fastest, slowest), SHUTTER_STOPS) };
     }
   }
 }
@@ -228,7 +245,7 @@ export function defaultConfig(): SimConfig {
     distanceRange: { min: 1, max: 5, step: 1 },
     lightingRange: { min: 1, max: 9, step: 1 },
     lightingLabels: lightingLabels(),
-    temperatureRange: { min: 2000, max: 8000, step: 100 },
+    temperatureRange: { min: 1000, max: 9000, step: 1000 },
     defaults: { ...DEFAULT_SETTINGS }
   };
 }
