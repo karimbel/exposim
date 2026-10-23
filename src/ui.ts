@@ -107,6 +107,9 @@ export class Simulator {
   setLighting(v: number): void {
     // La luminosité ne modifie que l'IL de la scène, jamais sa couleur.
     this.settings.lighting = clamp(Math.round(v), 1, 9);
+    // La température se cale sur la lumière de la scène, comme référence ;
+    // l'utilisateur peut ensuite la modifier.
+    this.settings.temperatureK = sceneForLevel(this.settings.lighting).nativeK;
     this.applyAuto();
     this.emitChange();
   }
@@ -294,7 +297,8 @@ export class Simulator {
     const t0 = performance.now();
     const sharp = renderDepthOfField(f.plate, f.disp, focusDisp, s.aperture, s.focalLength);
     const exposure = exposureRatio(s.aperture, s.shutter, s.iso, s.lighting);
-    const image = postProcess(sharp, { exposure, iso: s.iso, temperatureK: s.temperatureK, shakeAmount: 0, motionAmount: motion });
+    const referenceK = this.scene().nativeK;
+    const image = postProcess(sharp, { exposure, iso: s.iso, temperatureK: s.temperatureK, referenceK, shakeAmount: 0, motionAmount: motion });
     let spinner: HTMLCanvasElement | null = null;
     const sp = this.scene().spinner;
     if (sp && f.spinner) {
@@ -308,7 +312,7 @@ export class Simulator {
         c.filter = `blur(${(r * 0.62).toFixed(2)}px)`;
         c.drawImage(f.spinner, 0, 0);
       }
-      spinner = exposeLayer(src, exposure, s.temperatureK);
+      spinner = exposeLayer(src, exposure, s.temperatureK, referenceK);
     }
     this.lastRenderMs = Math.round(performance.now() - t0);
     return { image, spinner };
@@ -1048,6 +1052,11 @@ export function buildApp(root: HTMLElement, language: Language): void {
       log.textContent = hints[s.mode];
     }
   }
+  function syncSceneSliders(): void {
+    // La température peut changer avec la luminosité : le curseur suit.
+    tempSlider.setValue(kelvinLevel(sim.settings.temperatureK));
+    tempSlider.value.textContent = `${sim.settings.temperatureK.toLocaleString(language === 'fr' ? 'fr-FR' : 'en-US')} K`;
+  }
   function syncKelvinMood(): void {
     const level = kelvinLevel(sim.settings.temperatureK);
     const stop = kelvinStop(level);
@@ -1064,6 +1073,7 @@ export function buildApp(root: HTMLElement, language: Language): void {
     syncMeter();
     syncLog();
     syncKelvinMood();
+    syncSceneSliders();
     selectFromRecap();
     liveBtn.classList.toggle('is-visible', selectedShot !== null);
   }

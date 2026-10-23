@@ -46,6 +46,8 @@ export interface PhotoScene {
   subjectX: number;
   subjectY: number;
   spinner?: Spinner;
+  /** Température de couleur d'origine (K) : réglage proposé avec cette lumière. */
+  nativeK: number;
   /** Niveaux de lumière (1 .. 9) qui utilisent cette scène. */
   levels: number[];
 }
@@ -58,6 +60,7 @@ export const PHOTO_SCENES: PhotoScene[] = [
     subjectDisp: 0.21,
     subjectX: 0.33,
     subjectY: 0.56,
+    nativeK: 4000,
     levels: [1]
   },
   {
@@ -68,6 +71,7 @@ export const PHOTO_SCENES: PhotoScene[] = [
     subjectDisp: 0.21,
     subjectX: 0.33,
     subjectY: 0.56,
+    nativeK: 2000,
     levels: [2, 3]
   },
   {
@@ -86,6 +90,7 @@ export const PHOTO_SCENES: PhotoScene[] = [
       // ~10 tours/s : figé au 1/1000, filé visible au 1/60, disque flou au 1/15.
       realSpin: 60
     },
+    nativeK: 3000,
     levels: [4, 5]
   },
   {
@@ -104,6 +109,7 @@ export const PHOTO_SCENES: PhotoScene[] = [
       // ~10 tours/s : figé au 1/1000, filé visible au 1/60, disque flou au 1/15.
       realSpin: 60
     },
+    nativeK: 8000,
     levels: [6, 7]
   },
   {
@@ -122,6 +128,7 @@ export const PHOTO_SCENES: PhotoScene[] = [
       // ~10 tours/s : figé au 1/1000, filé visible au 1/60, disque flou au 1/15.
       realSpin: 60
     },
+    nativeK: 6000,
     levels: [8, 9]
   }
 ];
