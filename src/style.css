@@ -819,7 +819,10 @@ input[type="range"]::-moz-range-thumb {
 .dial__range { margin-top: 8px; }
 .dial__hint {
   display: block;
-  min-height: 16px;
+  /* Toujours deux lignes réservées : l'indication peut changer de longueur
+     sans modifier la hauteur de la barre, donc sans redimensionner le viseur. */
+  height: 2.4em;
+  overflow: hidden;
   margin-top: 5px;
   color: var(--text-faint);
   font-size: 10px;
