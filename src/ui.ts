@@ -122,16 +122,35 @@ export class Simulator {
     this.emitChange();
   }
 
+  /**
+   * Point de mise au point : position dans l'image (ix, iy) et dans le
+   * viseur (sx, sy). Le zoom se fait autour de lui : quand la focale ou la
+   * distance change, ce point reste au même endroit du viseur.
+   * Par défaut, il est posé sur le sujet.
+   */
+  afPoint: { ix: number; iy: number; sx: number; sy: number } | null = null;
+
+  private anchor(): { ix: number; iy: number; sx: number; sy: number } {
+    if (this.afPoint) return this.afPoint;
+    const sc = this.scene();
+    return { ix: sc.subjectX, iy: sc.subjectY, sx: sc.subjectX, sy: sc.subjectY };
+  }
+
+  /** Position actuelle du carré de mise au point dans le viseur (fractions). */
+  afScreen(): { x: number; y: number } {
+    const a = this.anchor();
+    const c = this.photoFrame().crop;
+    return { x: (a.ix - c.x) / c.w, y: (a.iy - c.y) / c.h };
+  }
+
   setFocusAt(x: number, y: number, onSubject: boolean): void {
     this.settings.focusX = clamp(x, 0.04, 0.96);
     this.settings.focusY = clamp(y, 0.04, 0.96);
-    // Un clic sur le sujet le verrouille net ; ailleurs, l'axe vertical du
-    // viseur représente une progression du lointain (haut) au proche (bas).
-    // Trois tiers lisibles : loin en haut, intermédiaire au centre, proche
-    // en bas. Le sujet reste visible : on évite le flou brutal d'un rendu
-    // purement théorique dans un viseur électronique.
     // Distance réelle du point visé, lue dans la carte de profondeur.
     this.settings.focusDistance = onSubject ? null : clamp(this.depthAt(x, y), 0.3, 1000);
+    // Le point visé devient le centre du zoom, sans déplacer l'image.
+    const c = this.photoFrame().crop;
+    this.afPoint = { ix: c.x + x * c.w, iy: c.y + y * c.h, sx: x, sy: y };
     this.emitChange();
   }
 
@@ -210,13 +229,14 @@ export class Simulator {
   private photoFrame() {
     const s = this.settings;
     const scene = this.scene();
-    const key = `${scene.id}|${s.focalLength}|${s.distance.toFixed(2)}`;
+    const a = this.anchor();
+    const key = `${scene.id}|${s.focalLength}|${s.distance.toFixed(2)}|${a.ix.toFixed(4)},${a.iy.toFixed(4)},${a.sx.toFixed(4)},${a.sy.toFixed(4)}`;
     if (!this.frame || this.frameKey !== key) {
       const img = photoImage(scene.image);
       const depth = photoImage(scene.depth);
       const aspect = SCENE_W / SCENE_H;
       const imgAspect = img ? img.width / img.height : 1.5;
-      const crop = photoCrop(s.focalLength, s.distance, aspect, imgAspect, scene.subjectX, scene.subjectY);
+      const crop = photoCrop(s.focalLength, s.distance, aspect, imgAspect, a);
       const plate = img ? drawCropped(img, crop, SCENE_W, SCENE_H) : makeCanvas(SCENE_W, SCENE_H);
       const disp = depth ? croppedDisparity(depth, crop, SCENE_W, SCENE_H, s.distance) : new Float32Array(SCENE_W * SCENE_H);
       const spriteImg = scene.spinner ? photoImage(scene.spinner.file) : null;
@@ -990,8 +1010,9 @@ export function buildApp(root: HTMLElement, language: Language): void {
     vfSideRight.innerHTML = `<sup>ISO</sup> ${iso}`;
   }
   function syncFocus(): void {
-    const focusX = clamp(sim.settings.focusX * SCENE_W, 28, SCENE_W - 28);
-    const focusY = clamp(sim.settings.focusY * SCENE_H, 28, SCENE_H - 42);
+    const af = sim.afScreen();
+    const focusX = clamp(af.x * SCENE_W, 28, SCENE_W - 28);
+    const focusY = clamp(af.y * SCENE_H, 28, SCENE_H - 42);
     const focusXPct = (focusX / SCENE_W) * 100;
     const focusPct = (focusY / SCENE_H) * 100;
     vfAf.style.left = `${focusXPct}%`;

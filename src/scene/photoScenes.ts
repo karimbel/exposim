@@ -57,7 +57,7 @@ export const PHOTO_SCENES: PhotoScene[] = [
     depth: `${PHOTO_BASE}/soleil-profondeur.png`,
     subjectDisp: 0.2,
     subjectX: 0.33,
-    subjectY: 0.5,
+    subjectY: 0.56,
     spinner: {
       file: `${PHOTO_BASE}/soleil-moulinet.webp`,
       cx: 390 / 1536,
@@ -110,17 +110,26 @@ export function photoImage(src: string): HTMLImageElement | null {
 export interface Crop { x: number; y: number; w: number; h: number }
 
 /** Recadrage (fractions de l'image) pour la focale et la distance choisies. */
-export function photoCrop(focal: number, distance: number, aspect: number, imgAspect: number, subjectX = 0.5, subjectY = 0.5): Crop {
+export interface ZoomAnchor {
+  /** Point de l'image (fractions) autour duquel on zoome… */
+  ix: number;
+  iy: number;
+  /** … et sa position fixe dans le viseur (fractions). */
+  sx: number;
+  sy: number;
+}
+
+export function photoCrop(focal: number, distance: number, aspect: number, imgAspect: number, anchor: ZoomAnchor = { ix: 0.5, iy: 0.5, sx: 0.5, sy: 0.5 }): Crop {
   // Se rapprocher du sujet resserre le cadrage (1 m → ×1,32).
   const eff = focal * (1 + (PHOTO_REF_DIST - distance) * 0.08);
   let w = clamp(PHOTO_REF_FOCAL / eff, 1 / 8, 1);
   let h = (w * imgAspect) / aspect;
   if (h > 1) { h = 1; w = aspect / imgAspect; }
-  // Plus on zoome, plus le cadrage se recentre sur le sujet (comme un
-  // photographe qui le garde dans le viseur).
-  const cx = clamp(subjectX * (1 - w) + 0.5 * w, w / 2, 1 - w / 2);
-  const cy = clamp(subjectY * (1 - h) + 0.5 * h, h / 2, 1 - h / 2);
-  return { x: cx - w / 2, y: cy - h / 2, w, h };
+  // Zoom autour du point de mise au point : il garde sa place dans le
+  // viseur (dans la limite des bords de l'image).
+  const x = clamp(anchor.ix - anchor.sx * w, 0, 1 - w);
+  const y = clamp(anchor.iy - anchor.sy * h, 0, 1 - h);
+  return { x, y, w, h };
 }
 
 /** Dessine la zone recadrée d'une image dans un canvas w × h. */
