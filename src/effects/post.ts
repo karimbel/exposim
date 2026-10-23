@@ -359,7 +359,8 @@ function addGrain(img: HTMLCanvasElement, iso: number): HTMLCanvasElement {
   return out;
 }
 
-function shakeBlur(img: HTMLCanvasElement, amount: number): HTMLCanvasElement {
+/** Flou de bougé (appareil tenu à main levée). */
+export function shakeBlur(img: HTMLCanvasElement, amount: number): HTMLCanvasElement {
   const out = makeCanvas(img.width, img.height);
   const ctx = ctx2d(out);
   // Échantillons rapprochés sur un seul axe : contrairement à quelques
