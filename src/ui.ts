@@ -724,7 +724,7 @@ export function buildApp(root: HTMLElement, language: Language): void {
     label: copy.light,
     fmt: (v) => {
       const level = Math.round(clamp(v, 1, 9));
-      return `${lightLabels[level]} · IL ${LIGHT_LEVELS[level].ev}`;
+      return `${lightLabels[level]} · ${language === 'fr' ? 'IL' : 'EV'} ${LIGHT_LEVELS[level].ev}`;
     },
     min: cfg.lightingRange.min, max: cfg.lightingRange.max, step: cfg.lightingRange.step,
     get: () => sim.settings.lighting,

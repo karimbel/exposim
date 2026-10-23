@@ -71,14 +71,14 @@ export const SHUTTER_STOPS: number[] = [
  * Ce réglage est indépendant de la température de couleur.
  */
 export const LIGHT_LEVELS: Record<number, { ev: number; fr: string; en: string }> = {
-  1: { ev: -2, fr: 'Nuit de pleine lune', en: 'Full-moon night' },
-  2: { ev: 3, fr: 'Nuit, feu de camp', en: 'Night, campfire' },
+  1: { ev: -2, fr: 'Pleine lune', en: 'Full moon' },
+  2: { ev: 3, fr: 'Feu de camp', en: 'Campfire' },
   3: { ev: 5, fr: 'Crépuscule', en: 'Dusk' },
-  4: { ev: 8, fr: 'Après le coucher du soleil', en: 'Just after sunset' },
-  5: { ev: 10, fr: 'Coucher de soleil', en: 'Sunset' },
-  6: { ev: 12, fr: 'Ciel très couvert', en: 'Heavy overcast' },
-  7: { ev: 13, fr: 'Ciel couvert', en: 'Overcast' },
-  8: { ev: 14, fr: 'Soleil voilé', en: 'Hazy sun' },
+  4: { ev: 8, fr: 'Soleil couché', en: 'After sunset' },
+  5: { ev: 10, fr: 'Couchant', en: 'Sunset' },
+  6: { ev: 12, fr: 'Très couvert', en: 'Heavy cloud' },
+  7: { ev: 13, fr: 'Couvert', en: 'Overcast' },
+  8: { ev: 14, fr: 'Voilé', en: 'Hazy' },
   9: { ev: 15, fr: 'Plein soleil', en: 'Full sun' }
 };
 
