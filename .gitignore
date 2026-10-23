@@ -1,0 +1,9 @@
+node_modules
+dist
+server-build
+.env
+.env.local
+*.log
+.DS_Store
+# Images de travail (variantes, références) : conservées en local uniquement
+_images-sources
