@@ -34,6 +34,16 @@ export interface Spinner {
   realSpin: number;
 }
 
+/** Feu de camp détouré (bûches + flammes), animé par `effects/fire.ts`. */
+export interface Fire {
+  file: string;
+  /** Coin haut gauche et taille du sprite (fractions de l'image). */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface PhotoScene {
   id: string;
   /** Image nette partout (l'objet animé en est retiré s'il y en a un). */
@@ -48,6 +58,7 @@ export interface PhotoScene {
   subjectX: number;
   subjectY: number;
   spinner?: Spinner;
+  fire?: Fire;
   /** Température de couleur d'origine (K) : réglage proposé avec cette lumière. */
   nativeK: number;
   /** Niveaux de lumière (1 .. 9) qui utilisent cette scène. */
@@ -74,6 +85,7 @@ export const PHOTO_SCENES: PhotoScene[] = [
     subjectDisp: 0.21,
     subjectX: 0.33,
     subjectY: 0.56,
+    fire: { file: `${PHOTO_BASE}/feu-flammes.webp`, x: 703 / 1536, y: 560 / 1024, w: 262 / 1536, h: 315 / 1024 },
     nativeK: 2000,
     levels: [2, 3]
   },
@@ -164,7 +176,7 @@ function load(src: string): Promise<void> {
 }
 
 export function loadPhotoScenes(): Promise<void> {
-  const files = PHOTO_SCENES.flatMap((s) => [s.image, s.depth, ...(s.water ? [s.water] : []), ...(s.spinner ? [s.spinner.file] : [])]);
+  const files = PHOTO_SCENES.flatMap((s) => [s.image, s.depth, ...(s.water ? [s.water] : []), ...(s.spinner ? [s.spinner.file] : []), ...(s.fire ? [s.fire.file] : [])]);
   return Promise.all(files.map(load)).then(() => undefined);
 }
 

@@ -19,6 +19,7 @@ import {
 import { exposeLayer, handheldMinShutter, motionAmount, postProcess, shakeBlur, shakeLengthPx } from './effects/post';
 import { blurRadius, drawSpinner, renderDepthOfField } from './effects/dof';
 import { smoothWater } from './effects/water';
+import { FireAnimator, splitFire, type FireLayers } from './effects/fire';
 import {
   croppedDisparity,
   croppedMask,
@@ -53,6 +54,7 @@ const COPY = {
     sharpRange: (a: string, b: string) => `Net de ${a} à ${b}`, sharpToInf: (a: string) => `Net de ${a} à l’infini`,
     spinFrozen: 'Moulinet figé', spinSlight: 'Moulinet : léger filé', spinStrong: 'Moulinet : filé marqué', spinDisc: 'Moulinet : disque flou',
     waterSmooth: 'eau lissée', waterSilk: 'eau laiteuse',
+    fireFrozen: 'Flammes figées', fireSlight: 'Flammes : léger flou', fireVeil: 'Flammes : voile lumineux',
     grain: ['Grain invisible', 'Léger grain', 'Grain visible', 'Grain marqué'],
     handheld: (min: string, focal: number) => `Risque de bougé : ${min} s mini à ${focal} mm`,
     program: 'L’appareil choisit le diaphragme et la vitesse.',
@@ -72,6 +74,7 @@ const COPY = {
     sharpRange: (a: string, b: string) => `Sharp from ${a} to ${b}`, sharpToInf: (a: string) => `Sharp from ${a} to infinity`,
     spinFrozen: 'Pinwheel frozen', spinSlight: 'Pinwheel: slight blur', spinStrong: 'Pinwheel: strong blur', spinDisc: 'Pinwheel: blurred disc',
     waterSmooth: 'smoothed water', waterSilk: 'silky water',
+    fireFrozen: 'Flames frozen', fireSlight: 'Flames: slight blur', fireVeil: 'Flames: glowing veil',
     grain: ['No visible grain', 'Slight grain', 'Visible grain', 'Strong grain'],
     handheld: (min: string, focal: number) => `Camera shake risk: ${min} s min. at ${focal} mm`,
     program: 'The camera selects aperture and shutter speed.',
@@ -225,6 +228,8 @@ export class Simulator {
   private liveKey = '';
   private liveCanvas: HTMLCanvasElement | null = null;
   private spinnerReady: HTMLCanvasElement | null = null;
+  private fireReady: FireAnimator | null = null;
+  private fireSplit = new Map<string, FireLayers>();
 
   /** Invalide les caches du viseur (après un changement de réglage). */
   clearStaticCache(): void {
@@ -306,6 +311,38 @@ export class Simulator {
     return Math.abs(1 / z - this.scene().subjectDisp) < 0.02;
   }
 
+  /** Bûches et flammes séparées, une fois par scène. */
+  private fireLayers(): FireLayers | null {
+    const scene = this.scene();
+    if (!scene.fire) return null;
+    let layers = this.fireSplit.get(scene.id);
+    if (!layers) {
+      const img = photoImage(scene.fire.file);
+      if (!img) return null;
+      layers = splitFire(img);
+      this.fireSplit.set(scene.id, layers);
+    }
+    return layers;
+  }
+
+  /** Rectangle du feu dans le viseur (px), selon le cadrage. */
+  private firePose() {
+    const fire = this.scene().fire;
+    if (!fire) return null;
+    const c = this.photoFrame().crop;
+    return {
+      x: ((fire.x - c.x) / c.w) * SCENE_W,
+      y: ((fire.y - c.y) / c.h) * SCENE_H,
+      w: (fire.w / c.w) * SCENE_W,
+      h: (fire.h / c.h) * SCENE_H
+    };
+  }
+
+  /** La scène contient-elle un feu animé ? */
+  hasFire(): boolean {
+    return !!this.scene().fire;
+  }
+
   private spinnerPose(elapsed: number) {
     const sp = this.scene().spinner;
     const f = this.photoFrame();
@@ -320,7 +357,7 @@ export class Simulator {
   }
 
   /** Image simulée sans l'objet animé : profondeur de champ, exposition, couleur, grain. */
-  private renderStill(motion: number): { image: HTMLCanvasElement; spinner: HTMLCanvasElement | null } {
+  private renderStill(motion: number): { image: HTMLCanvasElement; spinner: HTMLCanvasElement | null; fire: FireAnimator | null } {
     const s = this.settings;
     const f = this.photoFrame();
     const focusDisp = this.focusDisp();
@@ -346,8 +383,28 @@ export class Simulator {
       }
       spinner = exposeLayer(src, exposure, s.temperatureK, referenceK);
     }
+    let fire: FireAnimator | null = null;
+    const layers = this.fireLayers();
+    const fp = this.firePose();
+    if (layers && fp) {
+      // Flou de profondeur au pied du feu, à l'échelle du sprite.
+      const bx = clamp(Math.round(fp.x + fp.w / 2), 0, SCENE_W - 1);
+      const by = clamp(Math.round(fp.y + fp.h * 0.9), 0, SCENE_H - 1);
+      const r = blurRadius(f.disp[by * SCENE_W + bx], focusDisp, s.aperture, s.focalLength, SCENE_W) * (layers.flame.width / Math.max(1, fp.w));
+      const prep = (layer: HTMLCanvasElement): HTMLCanvasElement => {
+        let src = layer;
+        if (r > 0.5) {
+          src = makeCanvas(layer.width, layer.height);
+          const c = src.getContext('2d')!;
+          c.filter = `blur(${(r * 0.62).toFixed(2)}px)`;
+          c.drawImage(layer, 0, 0);
+        }
+        return exposeLayer(src, exposure, s.temperatureK, referenceK);
+      };
+      fire = new FireAnimator({ logs: prep(layers.logs), flame: prep(layers.flame) });
+    }
     this.lastRenderMs = Math.round(performance.now() - t0);
-    return { image, spinner };
+    return { image, spinner, fire };
   }
 
   lastRenderMs = 0;
@@ -379,15 +436,20 @@ export class Simulator {
       const still = this.renderStill(0);
       this.liveCanvas = still.image;
       this.spinnerReady = still.spinner;
+      this.fireReady = still.fire;
       this.liveKey = key;
     }
     const pose = this.spinnerPose(elapsed);
-    if (!pose || !this.spinnerReady) return this.liveCanvas;
+    const fp = this.firePose();
+    const spin = pose && this.spinnerReady;
+    const fire = fp && this.fireReady;
+    if (!spin && !fire) return this.liveCanvas;
     const out = makeCanvas(SCENE_W, SCENE_H);
     const ctx = out.getContext('2d')!;
     ctx.drawImage(this.liveCanvas, 0, 0);
     // Le viseur montre déjà le filé que produira la vitesse choisie.
-    drawSpinner(ctx, this.spinnerReady, pose.cx, pose.cy, pose.size, pose.rotation, pose.arc);
+    if (pose && this.spinnerReady) drawSpinner(ctx, this.spinnerReady, pose.cx, pose.cy, pose.size, pose.rotation, pose.arc);
+    if (fp && this.fireReady) this.fireReady.draw(ctx, fp.x, fp.y, fp.w, fp.h, elapsed / 1000, s.shutter);
     return out;
   }
 
@@ -400,6 +462,8 @@ export class Simulator {
     ctx.drawImage(still.image, 0, 0);
     const pose = this.spinnerPose(elapsed);
     if (pose && still.spinner) drawSpinner(ctx, still.spinner, pose.cx, pose.cy, pose.size, pose.rotation, pose.arc);
+    const fp = this.firePose();
+    if (fp && still.fire) still.fire.draw(ctx, fp.x, fp.y, fp.w, fp.h, elapsed / 1000, s.shutter);
     const final = shakeBlur(out, shakeLengthPx(s.shutter, s.focalLength, s.tripod));
     this.lastShot = final;
     return final;
@@ -1183,6 +1247,7 @@ export function buildApp(root: HTMLElement, language: Language): void {
       const parts: string[] = [];
       const spin = sim.spinnerArcDeg();
       if (spin !== null) parts.push(spin < 6 ? copy.spinFrozen : spin < 45 ? copy.spinSlight : spin < 300 ? copy.spinStrong : copy.spinDisc);
+      if (sim.hasFire()) parts.push(shutter < 1 / 90 ? copy.fireFrozen : shutter < 1 / 15 ? copy.fireSlight : copy.fireVeil);
       if (shutter >= 1) parts.push(copy.waterSilk);
       else if (shutter >= 1 / 8) parts.push(copy.waterSmooth);
       if (parts.length === 0) parts.push(shutter >= 1 / 30 ? copy.motionBlur : copy.frozen);

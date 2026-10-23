@@ -21,7 +21,7 @@ L'objectif n'est pas de reproduire l'interface d'un appareil existant, mais de p
 - La mise au point par clic directement dans le viseur
 - La focale, la distance et leur influence sur le cadrage
 - Le filé du sujet, le bougé à main levée et l'effet stabilisateur du trépied
-- L'eau qui devient laiteuse en pose lente
+- L'eau qui devient laiteuse et les flammes du feu de camp qui se fondent en voile en pose lente
 - Le grain, la balance des blancs et cinq ambiances lumineuses, de la pleine lune au plein soleil
 - L'alerte de hautes lumières : les zones brûlées clignotent dans le viseur et sur les photos
 - La grille des tiers pour composer l'image
@@ -35,7 +35,6 @@ Chaque ambiance repose sur une photo, sa carte de profondeur (qui pilote le flou
 
 - [ ] Compensation d'exposition (±3 IL) en modes P, Av et Tv
 - [ ] Défis : reproduire une photo cible avec les bons réglages
-- [ ] Flammes animées pour la scène du feu de camp
 
 ---
 
@@ -55,7 +54,7 @@ The goal is not to replicate a specific camera interface, but to offer a clear, 
 - Click-to-focus directly in the viewfinder
 - Focal length, distance, and their effect on framing
 - Subject motion blur, handheld camera shake, and tripod stabilisation
-- Water turning silky with long exposures
+- Water turning silky and campfire flames melting into a glowing veil with long exposures
 - Grain, white balance, and five lighting moods, from full moon to full sun
 - Highlight alert: blown-out areas blink in the viewfinder and on your photos
 - A rule-of-thirds grid for composition
@@ -69,7 +68,6 @@ Each lighting mood is built from a photo, its depth map (which drives the blur),
 
 - [ ] Exposure compensation (±3 EV) in P, Av, and Tv modes
 - [ ] Challenges: match a target photo with the right settings
-- [ ] Animated flames for the campfire scene
 
 ---
 
