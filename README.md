@@ -24,7 +24,8 @@ L'objectif n'est pas de reproduire l'interface d'un appareil existant, mais de p
 - L'eau qui devient laiteuse en pose lente
 - Le grain, la balance des blancs et cinq ambiances lumineuses, de la pleine lune au plein soleil
 - L'alerte de hautes lumières : les zones brûlées clignotent dans le viseur et sur les photos
-- La prise, la consultation et l'export des photographies créées
+- La grille des tiers pour composer l'image
+- La prise, la consultation et l'export des photos, avec leurs réglages et la comparaison de deux photos côte à côte
 
 ### Une scène qui peut évoluer
 
@@ -35,10 +36,6 @@ Chaque ambiance repose sur une photo, sa carte de profondeur (qui pilote le flou
 - [ ] Compensation d'exposition (±3 IL) en modes P, Av et Tv
 - [ ] Défis : reproduire une photo cible avec les bons réglages
 - [ ] Flammes animées pour la scène du feu de camp
-- [ ] Traduction anglaise complète de l'interface
-- [ ] Comparaison de deux photos de la galerie côte à côte
-- [ ] Mise en page pour petits écrans
-- [ ] Nettoyage de l'ancien code (calques, serveur Express inutilisé)
 
 ---
 
@@ -61,7 +58,8 @@ The goal is not to replicate a specific camera interface, but to offer a clear, 
 - Water turning silky with long exposures
 - Grain, white balance, and five lighting moods, from full moon to full sun
 - Highlight alert: blown-out areas blink in the viewfinder and on your photos
-- Capturing, reviewing, and exporting the photographs you create
+- A rule-of-thirds grid for composition
+- Capturing, reviewing, and exporting your photos, with their settings and side-by-side comparison of two shots
 
 ### An adaptable scene
 
@@ -72,10 +70,6 @@ Each lighting mood is built from a photo, its depth map (which drives the blur),
 - [ ] Exposure compensation (±3 EV) in P, Av, and Tv modes
 - [ ] Challenges: match a target photo with the right settings
 - [ ] Animated flames for the campfire scene
-- [ ] Complete English translation of the interface
-- [ ] Side-by-side comparison of two gallery photos
-- [ ] Small-screen layout
-- [ ] Cleanup of legacy code (layers, unused Express server)
 
 ---
 
@@ -88,3 +82,15 @@ This project is released under the [Creative Commons Attribution–NonCommercial
 ExpoSim est un projet indépendant, inspiré du principe pédagogique des simulateurs photographiques. Il ne réutilise ni le code ni les images de CameraSim.
 
 ExpoSim is an independent project inspired by the educational principle of photography simulators. It does not reuse CameraSim code or imagery.
+
+---
+
+## Développement / Development
+
+```bash
+npm install
+npm run dev      # serveur local / local server
+npm run build    # site statique dans dist/ / static site in dist/
+```
+
+Le site est publié sur GitHub Pages à chaque envoi sur `main`. / The site is deployed to GitHub Pages on every push to `main`.

@@ -32,10 +32,8 @@ import {
   type PhotoScene
 } from './scene/photoScenes';
 import { makeCanvas } from './scene/objects';
-import { renderScene } from './scene/world';
 import { journal } from './debug/journal';
 import { lightIconSvg } from './lightIcons';
-import { REF_FOCAL_MM } from './scene/sceneConfig';
 
 // Plein format 24 × 36 mm : ratio 3:2.
 export const SCENE_W = 1050;
@@ -48,8 +46,8 @@ const COPY = {
     tagline: 'Simulateur photographique — la scène, notre image.',
     scene: 'Lumière de la scène', light: 'Luminosité', temperature: 'Balance des blancs',
     lens: 'Objectif', distance: 'Distance au sujet', focal: 'Focale (zoom)',
-    series: 'Série', tripod: 'Trépied (stabilise l’image)', highlights: 'Alerte hautes lumières', capture: 'Déclencher', shortcut: 'ou appuyer sur Espace',
-    save: 'Sauvegarder l’image', gallery: 'Photos prises', galleryHint: 'cliquez pour agrandir · ✕ pour supprimer',
+    series: 'Série', tripod: 'Trépied (stabilise l’image)', highlights: 'Alerte hautes lumières', thirds: 'Grille des tiers', compare: 'Comparer avec une autre photo', capture: 'Déclencher', shortcut: 'ou appuyer sur Espace',
+    save: 'Sauvegarder l’image', gallery: 'Photos prises', galleryHint: 'cliquez pour agrandir · ⇄ pour comparer deux photos · ✕ pour supprimer',
     empty: 'Aucune photo pour le moment.', backLive: 'Revenir au direct',
     bokeh: 'Effet bokeh marqué', depth: 'Profondeur de champ', motionBlur: 'Flou de filé possible', frozen: 'Mouvement figé',
     sharpRange: (a: string, b: string) => `Net de ${a} à ${b}`, sharpToInf: (a: string) => `Net de ${a} à l’infini`,
@@ -67,8 +65,8 @@ const COPY = {
     tagline: 'Photography simulator — the scene, our image.',
     scene: 'Scene light', light: 'Brightness', temperature: 'White balance',
     lens: 'Lens', distance: 'Subject distance', focal: 'Focal length (zoom)',
-    series: 'Series', tripod: 'Tripod (stabilizes the image)', highlights: 'Highlight alert', capture: 'Capture', shortcut: 'or press Space',
-    save: 'Save image', gallery: 'Captured photos', galleryHint: 'click to enlarge · ✕ to delete',
+    series: 'Series', tripod: 'Tripod (stabilizes the image)', highlights: 'Highlight alert', thirds: 'Rule-of-thirds grid', compare: 'Compare with another photo', capture: 'Capture', shortcut: 'or press Space',
+    save: 'Save image', gallery: 'Captured photos', galleryHint: 'click to enlarge · ⇄ to compare two photos · ✕ to delete',
     empty: 'No photos yet.', backLive: 'Return to live view',
     bokeh: 'Strong bokeh effect', depth: 'Depth of field', motionBlur: 'Motion blur possible', frozen: 'Motion frozen',
     sharpRange: (a: string, b: string) => `Sharp from ${a} to ${b}`, sharpToInf: (a: string) => `Sharp from ${a} to infinity`,
@@ -90,6 +88,8 @@ const COPY = {
 export interface Shot {
   canvas: HTMLCanvasElement;
   label: string;
+  /** Réglages abrégés, affichés sous la vignette (deux lignes). */
+  short: [string, string];
 }
 
 export class Simulator {
@@ -218,23 +218,17 @@ export class Simulator {
 
   /* --------------------------------- rendu -------------------------------- */
 
-  renderScene(animate: boolean): ReturnType<typeof renderScene> {
-    return renderScene({ settings: this.settings, width: SCENE_W, height: SCENE_H, seed: 7, animate });
-  }
-
   /* ------------------------- scène photo + profondeur ------------------------ */
 
   private frameKey = '';
   private frame: { plate: HTMLCanvasElement; disp: Float32Array; crop: Crop; spinner: HTMLCanvasElement | null; water: HTMLCanvasElement | null } | null = null;
   private liveKey = '';
   private liveCanvas: HTMLCanvasElement | null = null;
-  private spinnerKey = '';
   private spinnerReady: HTMLCanvasElement | null = null;
 
   /** Invalide les caches du viseur (après un changement de réglage). */
   clearStaticCache(): void {
     this.liveKey = '';
-    this.spinnerKey = '';
   }
 
   private scene(): PhotoScene {
@@ -705,7 +699,9 @@ export function buildApp(root: HTMLElement, language: Language): void {
   for (const corner of ['tl', 'tr', 'bl', 'br']) vfBrackets.append(el('span', `vf-bracket vf-bracket--${corner}`));
   const vfAf = el('div', 'vf-af', '');
   vfAf.setAttribute('aria-label', 'Mise au point verrouillée sur le sujet');
-  vfOverlay.append(vfBrackets, vfAf);
+  const vfGrid = el('div', 'vf-grid');
+  for (const line of ['v1', 'v2', 'h1', 'h2']) vfGrid.append(el('span', `vf-grid__line vf-grid__line--${line}`));
+  vfOverlay.append(vfGrid, vfBrackets, vfAf);
 
   const vfHistogram = document.createElement('canvas');
   vfHistogram.className = 'vf-histogram';
@@ -824,11 +820,22 @@ export function buildApp(root: HTMLElement, language: Language): void {
   serSec.append(tripodRow);
   // Alerte de hautes lumières : les zones brûlées clignotent en noir,
   // dans le viseur comme sur les photos prises.
+  const gridRow = el('label', 'control control--tripod');
+  const gridCheck = document.createElement('input');
+  gridCheck.type = 'checkbox';
+  gridCheck.id = 'thirds';
+  gridCheck.checked = false;
+  gridRow.append(gridCheck, el('span', 'control__label', copy.thirds));
+  gridCheck.addEventListener('change', () => {
+    vfGrid.classList.toggle('is-visible', gridCheck.checked);
+    journal('grille-tiers', { active: gridCheck.checked });
+  });
+  serSec.append(gridRow);
   const hiRow = el('label', 'control control--tripod');
   const hiCheck = document.createElement('input');
   hiCheck.type = 'checkbox';
   hiCheck.id = 'highlights';
-  hiCheck.checked = true;
+  hiCheck.checked = false;
   hiRow.append(hiCheck, el('span', 'control__label', copy.highlights));
   hiCheck.addEventListener('change', () => journal('alerte-hautes-lumieres', { active: hiCheck.checked }));
   serSec.append(hiRow);
@@ -865,10 +872,19 @@ export function buildApp(root: HTMLElement, language: Language): void {
   lightboxCanvas.height = SCENE_H;
   lightboxCanvas.className = 'lightbox__canvas';
   const lightboxCaption = el('div', 'lightbox__caption', '');
+  const lightboxCanvas2 = document.createElement('canvas');
+  lightboxCanvas2.width = SCENE_W;
+  lightboxCanvas2.height = SCENE_H;
+  lightboxCanvas2.className = 'lightbox__canvas';
+  const lightboxCaption2 = el('div', 'lightbox__caption', '');
+  const lightboxFig = el('div', 'lightbox__fig');
+  lightboxFig.append(lightboxCanvas, lightboxCaption);
+  const lightboxFig2 = el('div', 'lightbox__fig lightbox__fig--second');
+  lightboxFig2.append(lightboxCanvas2, lightboxCaption2);
   const lightboxClose = el('button', 'lightbox__close', '×');
   lightboxClose.type = 'button';
   lightboxClose.setAttribute('aria-label', language === 'fr' ? 'Fermer la photo agrandie' : 'Close enlarged photo');
-  lightboxFrame.append(lightboxCanvas, lightboxCaption, lightboxClose);
+  lightboxFrame.append(lightboxFig, lightboxFig2, lightboxClose);
   lightbox.append(lightboxFrame);
   root.append(lightbox);
 
@@ -878,8 +894,9 @@ export function buildApp(root: HTMLElement, language: Language): void {
   /* galerie */
   const shots: Shot[] = [];
   let selectedShot: Shot | null = null;
+  /** Photos cochées pour la comparaison (deux au plus). */
+  const compareSel: Shot[] = [];
   let freezeUntil = 0;
-  let shownCanvas: HTMLCanvasElement | null = null;
   let lastHistogramAt = 0;
 
   function drawHistogram(c: HTMLCanvasElement): void {
@@ -933,11 +950,25 @@ export function buildApp(root: HTMLElement, language: Language): void {
     const data = sctx.getImageData(0, 0, sw, sh);
     const d = data.data;
     let count = 0;
+    const flags = new Uint8Array(sw * sh);
     for (let i = 0; i < d.length; i += 4) {
-      const clipped = Math.max(d[i], d[i + 1], d[i + 2]) >= 247;
-      d[i] = 0; d[i + 1] = 0; d[i + 2] = 0;
-      d[i + 3] = clipped ? 235 : 0;
-      if (clipped) count++;
+      flags[i >> 2] = Math.max(d[i], d[i + 1], d[i + 2]) >= 249 ? 1 : 0;
+    }
+    // Filtre majoritaire 3 × 3 : les pixels isolés disparaissent, les zones
+    // brûlées restent d'un seul tenant.
+    for (let y = 0; y < sh; y++) {
+      for (let x = 0; x < sw; x++) {
+        let n = 0;
+        for (let dy = -1; dy <= 1; dy++) {
+          const yy = Math.min(sh - 1, Math.max(0, y + dy));
+          for (let dx = -1; dx <= 1; dx++) n += flags[yy * sw + Math.min(sw - 1, Math.max(0, x + dx))];
+        }
+        const clipped = n >= 5;
+        const i = (y * sw + x) * 4;
+        d[i] = 0; d[i + 1] = 0; d[i + 2] = 0;
+        d[i + 3] = clipped ? 235 : 0;
+        if (clipped) count++;
+      }
     }
     // Quelques pixels isolés (reflets ponctuels) ne déclenchent pas l'alerte.
     if (count < (d.length / 4) * 0.0004) { clipMask = null; return null; }
@@ -947,24 +978,43 @@ export function buildApp(root: HTMLElement, language: Language): void {
   }
 
   function drawCanvas(c: HTMLCanvasElement, still: HTMLCanvasElement = c): void {
-    shownCanvas = c;
     ctx.drawImage(c, 0, 0);
     drawHistogram(c);
     // Clignotement (≈ 3 fois par seconde), comme à la relecture sur un appareil.
     if (hiCheck.checked && Math.floor(performance.now() / 330) % 2 === 0) {
       const mask = clippedMask(still);
-      if (mask) ctx.drawImage(mask, 0, 0, c.width, c.height);
+      if (mask) {
+        ctx.imageSmoothingEnabled = true;
+        ctx.drawImage(mask, 0, 0, c.width, c.height);
+      }
     }
   }
 
   function openLightbox(shot: Shot): void {
+    lightboxFrame.classList.remove('is-compare');
     lightboxCanvas.getContext('2d')!.drawImage(shot.canvas, 0, 0);
     lightboxCaption.textContent = shot.label;
     lightbox.classList.add('is-open');
     lightboxClose.focus();
   }
 
+  /** Deux photos côte à côte (ex. f/1.4 contre f/16). */
+  function openCompare(a: Shot, b: Shot): void {
+    lightboxFrame.classList.add('is-compare');
+    lightboxCanvas.getContext('2d')!.drawImage(a.canvas, 0, 0);
+    lightboxCaption.textContent = `#${shots.indexOf(a) + 1} · ${a.label}`;
+    lightboxCanvas2.getContext('2d')!.drawImage(b.canvas, 0, 0);
+    lightboxCaption2.textContent = `#${shots.indexOf(b) + 1} · ${b.label}`;
+    lightbox.classList.add('is-open');
+    lightboxClose.focus();
+    journal('comparaison', { a: a.label, b: b.label });
+  }
+
   function closeLightbox(): void {
+    if (compareSel.length > 0) {
+      compareSel.length = 0;
+      refreshGallery();
+    }
     lightbox.classList.remove('is-open');
   }
 
@@ -1018,6 +1068,24 @@ export function buildApp(root: HTMLElement, language: Language): void {
       thumb.height = 176;
       thumb.getContext('2d')!.drawImage(shot.canvas, 0, 0, thumb.width, thumb.height);
       const meta = el('div', 'shot__meta', `#${i + 1}`);
+      const settings = el('div', 'shot__settings');
+      settings.append(el('span', '', shot.short[0]), el('span', '', shot.short[1]));
+      const cmp = el('button', 'shot__cmp', '⇄');
+      cmp.type = 'button';
+      cmp.title = copy.compare;
+      cmp.setAttribute('aria-label', copy.compare);
+      if (compareSel.includes(shot)) {
+        card.classList.add('shot--compare');
+        cmp.classList.add('is-on');
+      }
+      cmp.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const at = compareSel.indexOf(shot);
+        if (at >= 0) compareSel.splice(at, 1);
+        else compareSel.push(shot);
+        refreshGallery();
+        if (compareSel.length === 2) openCompare(compareSel[0], compareSel[1]);
+      });
       const del = el('button', 'shot__del', '✕');
       del.type = 'button';
       del.title = language === 'fr' ? 'Supprimer' : 'Delete';
@@ -1025,6 +1093,8 @@ export function buildApp(root: HTMLElement, language: Language): void {
         ev.stopPropagation();
         const idx = shots.indexOf(shot);
         if (idx >= 0) shots.splice(idx, 1);
+        const sel = compareSel.indexOf(shot);
+        if (sel >= 0) compareSel.splice(sel, 1);
         if (selectedShot === shot) {
           selectedShot = null;
           simulateLiveDraw(performance.now());
@@ -1032,7 +1102,9 @@ export function buildApp(root: HTMLElement, language: Language): void {
         refreshGallery();
         syncAll();
       });
-      card.append(thumb, meta, del);
+      const pic = el('div', 'shot__pic');
+      pic.append(thumb, meta, cmp, del);
+      card.append(pic, settings);
       card.addEventListener('click', () => {
         selectedShot = shot;
         drawCanvas(shot.canvas);
@@ -1227,7 +1299,8 @@ export function buildApp(root: HTMLElement, language: Language): void {
     const s = sim.settings;
     const shot: Shot = {
       canvas: shotCanvas,
-      label: `${MODE_LABELS[s.mode]} · ${formatFocal(s.focalLength)} · ${formatAperture(s.aperture)} · ${formatShutterValue(s.shutter)} · ISO${s.iso} · ${formatDistance(s.distance)}`
+      label: `${MODE_LABELS[s.mode]} · ${formatFocal(s.focalLength)} · ${formatAperture(s.aperture)} · ${formatShutterValue(s.shutter)} · ISO${s.iso} · ${formatDistance(s.distance)}`,
+      short: [`${formatAperture(s.aperture)} · ${formatShutterValue(s.shutter)}`, `ISO ${s.iso} · ${formatFocal(s.focalLength)}`]
     };
     shots.push(shot);
     journal('photo', { ...snapshot(), legende: shot.label });

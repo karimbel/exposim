@@ -453,6 +453,21 @@ html, body {
 
 .vf-brackets { position: absolute; inset: 0; }
 
+/* grille des tiers (composition) */
+.vf-grid { position: absolute; inset: 0; display: none; }
+.vf-grid.is-visible { display: block; }
+.vf-grid__line {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.45);
+}
+.vf-grid__line--v1, .vf-grid__line--v2 { top: 0; bottom: 0; width: 1px; }
+.vf-grid__line--h1, .vf-grid__line--h2 { left: 0; right: 0; height: 1px; }
+.vf-grid__line--v1 { left: 33.333%; }
+.vf-grid__line--v2 { left: 66.667%; }
+.vf-grid__line--h1 { top: 33.333%; }
+.vf-grid__line--h2 { top: 66.667%; }
+
 .vf-bracket {
   position: absolute;
   width: 26px;
@@ -596,9 +611,9 @@ html, body {
   gap: 10px;
   overflow-x: auto;
   padding-bottom: 4px;
-  /* Hauteur réservée d'une vignette : le viseur ne rétrécit pas à la
-     première prise de vue. */
-  min-height: 96px;
+  /* Hauteur réservée d'une vignette et de ses réglages : le viseur ne
+     rétrécit pas à la première prise de vue. */
+  min-height: 130px;
   box-sizing: border-box;
 }
 
@@ -621,7 +636,42 @@ html, body {
 .shot:hover { border-color: var(--text-faint); }
 .shot--active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 
+.shot__pic { position: relative; }
 .shot canvas { display: block; width: 132px; height: 88px; }
+
+.shot__settings {
+  /* Réglages de la photo, sous la vignette. */
+  display: flex;
+  flex-direction: column;
+  padding: 3px 6px 4px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.shot__cmp {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  width: 22px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: rgba(6, 10, 16, 0.8);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+.shot:hover .shot__cmp, .shot__cmp.is-on { opacity: 1; }
+.shot__cmp:hover { color: var(--accent); }
+.shot__cmp.is-on { background: var(--accent); color: #0d1117; }
+.shot--compare { border-color: var(--accent); }
 
 .shot__meta {
   /* Numéro posé sur la vignette : la galerie reste basse. */
@@ -696,6 +746,16 @@ html, body {
   border-radius: 7px;
   background: #05070a;
 }
+.lightbox__fig { min-width: 0; }
+.lightbox__fig--second { display: none; }
+.lightbox__frame.is-compare {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  width: min(1600px, 96vw);
+}
+.lightbox__frame.is-compare .lightbox__fig--second { display: block; }
+
 .lightbox__caption {
   overflow: hidden;
   padding: 7px 4px 1px;
@@ -917,6 +977,17 @@ input[type="range"]::-moz-range-thumb {
 
 /* ------------------------------- responsive ------------------------------- */
 
+/* Écrans larges mais peu hauts (portables 1280 × 720, 1366 × 768, 1440 × 900) :
+   le viseur prend toute la hauteur de la fenêtre sous la barre de pose ; la
+   galerie et le pied de page passent en dessous (on fait défiler la page). */
+@media (min-width: 1081px) and (max-height: 920px) {
+  html, body { height: auto; min-height: 100%; overflow: auto; }
+  #app { height: auto; min-height: 100vh; }
+  .app__main { grid-template-rows: auto auto auto; gap: 10px; padding: 10px 16px 14px; }
+  .stage { height: max(380px, calc(100svh - 222px)); padding: 8px; }
+  .panel { gap: 8px; }
+}
+
 @media (max-width: 1080px) {
   html, body { height: auto; min-height: 100%; overflow: auto; }
   #app { height: auto; min-height: 100vh; }
@@ -953,7 +1024,9 @@ input[type="range"]::-moz-range-thumb {
   .gallery { padding: 10px; }
   .gallery__head { align-items: flex-start; flex-direction: column; gap: 3px; }
   .shot canvas { width: 108px; height: 72px; }
-  .gallery__strip { min-height: 80px; }
+  .gallery__strip { min-height: 114px; }
+  .shot__settings { font-size: 9.5px; padding: 2px 4px 3px; }
+  .lightbox__frame.is-compare { grid-template-columns: 1fr; overflow-y: auto; }
   .vf-bottom { bottom: 8px; gap: 6px; }
   .vf-side { padding: 3px 6px; font-size: 11px; }
   .vf-histogram { top: 20px; right: 16px; width: 96px; height: 33px; }
