@@ -52,10 +52,65 @@ export interface PhotoScene {
 
 export const PHOTO_SCENES: PhotoScene[] = [
   {
+    id: 'lune',
+    image: `${PHOTO_BASE}/lune.webp`,
+    depth: `${PHOTO_BASE}/lune-profondeur.png`,
+    subjectDisp: 0.21,
+    subjectX: 0.33,
+    subjectY: 0.56,
+    levels: [1]
+  },
+  {
+    // Carte de profondeur provisoire (scène plein soleil) en attendant la sienne.
+    id: 'feu',
+    image: `${PHOTO_BASE}/feu.webp`,
+    depth: `${PHOTO_BASE}/soleil-profondeur.png`,
+    subjectDisp: 0.21,
+    subjectX: 0.33,
+    subjectY: 0.56,
+    levels: [2, 3]
+  },
+  {
+    id: 'coucher',
+    image: `${PHOTO_BASE}/coucher.webp`,
+    depth: `${PHOTO_BASE}/coucher-profondeur.png`,
+    subjectDisp: 0.21,
+    subjectX: 0.33,
+    subjectY: 0.56,
+    spinner: {
+      file: `${PHOTO_BASE}/coucher-moulinet.webp`,
+      cx: 389 / 1536,
+      cy: 247 / 1024,
+      widthFrac: 238 / 1536,
+      displaySpin: 2.5,
+      // ~10 tours/s : figé au 1/1000, filé visible au 1/60, disque flou au 1/15.
+      realSpin: 60
+    },
+    levels: [4, 5]
+  },
+  {
+    id: 'couvert',
+    image: `${PHOTO_BASE}/couvert.webp`,
+    depth: `${PHOTO_BASE}/couvert-profondeur.png`,
+    subjectDisp: 0.21,
+    subjectX: 0.33,
+    subjectY: 0.56,
+    spinner: {
+      file: `${PHOTO_BASE}/couvert-moulinet.webp`,
+      cx: 389 / 1536,
+      cy: 247 / 1024,
+      widthFrac: 240 / 1536,
+      displaySpin: 2.5,
+      // ~10 tours/s : figé au 1/1000, filé visible au 1/60, disque flou au 1/15.
+      realSpin: 60
+    },
+    levels: [6, 7]
+  },
+  {
     id: 'soleil',
     image: `${PHOTO_BASE}/soleil.webp`,
     depth: `${PHOTO_BASE}/soleil-profondeur.png`,
-    subjectDisp: 0.2,
+    subjectDisp: 0.21,
     subjectX: 0.33,
     subjectY: 0.56,
     spinner: {
@@ -67,14 +122,13 @@ export const PHOTO_SCENES: PhotoScene[] = [
       // ~10 tours/s : figé au 1/1000, filé visible au 1/60, disque flou au 1/15.
       realSpin: 60
     },
-    // En attendant les autres scènes, la scène de jour sert à toutes les lumières.
-    levels: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+    levels: [8, 9]
   }
 ];
 
 export function sceneForLevel(level: number): PhotoScene {
   const l = Math.round(clamp(level, 1, 9));
-  return PHOTO_SCENES.find((s) => s.levels.includes(l)) ?? PHOTO_SCENES[0];
+  return PHOTO_SCENES.find((s) => s.levels.includes(l)) ?? PHOTO_SCENES[PHOTO_SCENES.length - 1];
 }
 
 /* ------------------------------- chargement ------------------------------- */
