@@ -60,9 +60,9 @@ export const PHOTO_SCENES: PhotoScene[] = [
     subjectY: 0.5,
     spinner: {
       file: `${PHOTO_BASE}/soleil-moulinet.webp`,
-      cx: 386 / 1536,
-      cy: 250 / 1024,
-      widthFrac: 232 / 1536,
+      cx: 390 / 1536,
+      cy: 256 / 1024,
+      widthFrac: 238 / 1536,
       displaySpin: 2.5,
       // ~10 tours/s : figé au 1/1000, filé visible au 1/60, disque flou au 1/15.
       realSpin: 60
