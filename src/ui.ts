@@ -43,7 +43,7 @@ export type Language = 'fr' | 'en';
 const COPY = {
   fr: {
     tagline: 'Simulateur photographique — la scène, notre image.',
-    scene: 'Lumière de la scène', light: 'Luminosité', temperature: 'Température de couleur',
+    scene: 'Lumière de la scène', light: 'Luminosité', temperature: 'Balance des blancs',
     lens: 'Objectif', distance: 'Distance au sujet', focal: 'Focale (zoom)',
     series: 'Série', tripod: 'Trépied (stabilise l’image)', capture: 'Déclencher', shortcut: 'ou appuyer sur Espace',
     save: 'Sauvegarder l’image', gallery: 'Photos prises', galleryHint: 'cliquez pour agrandir · ✕ pour supprimer',
@@ -57,7 +57,7 @@ const COPY = {
   },
   en: {
     tagline: 'Photography simulator — the scene, our image.',
-    scene: 'Scene light', light: 'Brightness', temperature: 'Colour temperature',
+    scene: 'Scene light', light: 'Brightness', temperature: 'White balance',
     lens: 'Lens', distance: 'Subject distance', focal: 'Focal length (zoom)',
     series: 'Series', tripod: 'Tripod (stabilizes the image)', capture: 'Capture', shortcut: 'or press Space',
     save: 'Save image', gallery: 'Captured photos', galleryHint: 'click to enlarge · ✕ to delete',
@@ -735,19 +735,18 @@ export function buildApp(root: HTMLElement, language: Language): void {
     set: (v) => sim.setLighting(v),
     isActive: () => true
   });
-  const tempSlider = buildSlider({
-    label: copy.temperature,
-    fmt: (v) => `${kelvinStop(v).kelvin.toLocaleString(language === 'fr' ? 'fr-FR' : 'en-US')} K`,
-    min: 1, max: 9, step: 1,
-    get: () => kelvinLevel(sim.settings.temperatureK),
-    set: (v) => sim.setTemperatureK(kelvinStop(v).kelvin),
-    isActive: () => true
-  });
+  // Balance des blancs : valeur fixe, celle de la lumière de la scène
+  // (affichée comme repère, non modifiable).
+  const wbRow = el('div', 'control control--readonly');
+  const wbHead = el('div', 'control__head');
+  const wbValue = el('span', 'control__value', '');
+  wbHead.append(el('span', 'control__label', copy.temperature), wbValue);
+  wbRow.append(wbHead);
   const kelvinMood = el('div', 'kelvin-mood');
   const kelvinMoodIcon = el('span', 'kelvin-mood__icon');
   const kelvinMoodLabel = el('span', 'kelvin-mood__label');
   kelvinMood.append(kelvinMoodIcon, kelvinMoodLabel);
-  sceneSec.append(lightSlider.wrap, tempSlider.wrap, kelvinMood);
+  sceneSec.append(lightSlider.wrap, wbRow, kelvinMood);
   panel.append(sceneSec);
 
   const lensSec = el('div', 'panel__section');
@@ -1054,8 +1053,7 @@ export function buildApp(root: HTMLElement, language: Language): void {
   }
   function syncSceneSliders(): void {
     // La température peut changer avec la luminosité : le curseur suit.
-    tempSlider.setValue(kelvinLevel(sim.settings.temperatureK));
-    tempSlider.value.textContent = `${sim.settings.temperatureK.toLocaleString(language === 'fr' ? 'fr-FR' : 'en-US')} K`;
+    wbValue.textContent = `${sim.settings.temperatureK.toLocaleString(language === 'fr' ? 'fr-FR' : 'en-US')} K`;
   }
   function syncKelvinMood(): void {
     const level = kelvinLevel(sim.settings.temperatureK);
