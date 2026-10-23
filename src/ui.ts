@@ -657,7 +657,7 @@ export function buildApp(root: HTMLElement, language: Language): void {
       isActive: () => true
     },
     {
-      label: 'Ouverture',
+      label: language === 'fr' ? 'Ouverture' : 'Aperture',
       icon: 'aperture',
       fmt: (v) => formatAperture(cfg.apertureStops[Math.round(v)]),
       min: 0, max: cfg.apertureStops.length - 1, step: 1,
@@ -666,7 +666,7 @@ export function buildApp(root: HTMLElement, language: Language): void {
       isActive: () => apertureEnabled()
     },
     {
-      label: 'Vitesse',
+      label: language === 'fr' ? 'Vitesse' : 'Shutter',
       icon: 'shutter',
       fmt: (v) => formatShutterValue(cfg.shutterStops[Math.round(v)]),
       min: 0, max: cfg.shutterStops.length - 1, step: 1,

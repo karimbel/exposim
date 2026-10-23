@@ -513,7 +513,12 @@ html, body {
   background: rgba(6, 10, 16, 0.66);
   border: 1px solid #fff;
   border-radius: 5px;
-  padding: 5px 12px 4px;
+  padding: 5px 0 4px;
+  /* Largeur fixe (calée sur « ISO 12800 ») : les cadres ne bougent pas
+     quand les valeurs changent. */
+  box-sizing: border-box;
+  width: 6.6em;
+  text-align: center;
 }
 
 .vf-side sup {
