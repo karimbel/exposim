@@ -52,6 +52,10 @@ const COPY = {
     save: 'Sauvegarder l’image', gallery: 'Photos prises', galleryHint: 'cliquez pour agrandir · ✕ pour supprimer',
     empty: 'Aucune photo pour le moment.', backLive: 'Revenir au direct',
     bokeh: 'Effet bokeh marqué', depth: 'Profondeur de champ', motionBlur: 'Flou de filé possible', frozen: 'Mouvement figé',
+    sharpRange: (a: string, b: string) => `Net de ${a} à ${b}`, sharpToInf: (a: string) => `Net de ${a} à l’infini`,
+    spinFrozen: 'Moulinet figé', spinSlight: 'Moulinet : léger filé', spinStrong: 'Moulinet : filé marqué', spinDisc: 'Moulinet : disque flou',
+    waterSmooth: 'eau lissée', waterSilk: 'eau laiteuse',
+    grain: ['Grain invisible', 'Léger grain', 'Grain visible', 'Grain marqué'],
     handheld: (min: string, focal: number) => `Risque de bougé : ${min} s mini à ${focal} mm`,
     program: 'L’appareil choisit le diaphragme et la vitesse.',
     aperturePriority: 'Vous choisissez l’ouverture ; l’appareil règle la vitesse.',
@@ -67,6 +71,10 @@ const COPY = {
     save: 'Save image', gallery: 'Captured photos', galleryHint: 'click to enlarge · ✕ to delete',
     empty: 'No photos yet.', backLive: 'Return to live view',
     bokeh: 'Strong bokeh effect', depth: 'Depth of field', motionBlur: 'Motion blur possible', frozen: 'Motion frozen',
+    sharpRange: (a: string, b: string) => `Sharp from ${a} to ${b}`, sharpToInf: (a: string) => `Sharp from ${a} to infinity`,
+    spinFrozen: 'Pinwheel frozen', spinSlight: 'Pinwheel: slight blur', spinStrong: 'Pinwheel: strong blur', spinDisc: 'Pinwheel: blurred disc',
+    waterSmooth: 'smoothed water', waterSilk: 'silky water',
+    grain: ['No visible grain', 'Slight grain', 'Visible grain', 'Strong grain'],
     handheld: (min: string, focal: number) => `Camera shake risk: ${min} s min. at ${focal} mm`,
     program: 'The camera selects aperture and shutter speed.',
     aperturePriority: 'You select the aperture; the camera sets shutter speed.',
@@ -267,6 +275,27 @@ export class Simulator {
     const scale = PHOTO_REF_DIST / s.distance;
     if (s.focusDistance === null) return this.scene().subjectDisp * scale;
     return (1 / s.focusDistance) * scale;
+  }
+
+  /**
+   * Zone nette (m) selon la formule optique classique, cercle de confusion
+   * de 0,03 mm (plein format) : distance de mise au point s, focale f,
+   * ouverture N, hyperfocale H = f²/(N·c) + f.
+   */
+  dofRange(): { near: number; far: number } {
+    const s = 1 / Math.max(this.focusDisp(), 1e-4);
+    const f = this.settings.focalLength / 1000;
+    const N = this.settings.aperture;
+    const H = (f * f) / (N * 0.00003) + f;
+    const near = (s * (H - f)) / (H + s - 2 * f);
+    const far = s >= H ? Infinity : (s * (H - f)) / (H - s);
+    return { near, far };
+  }
+
+  /** Angle (degrés) parcouru par l'objet en rotation pendant la pose, ou null s'il n'y en a pas. */
+  spinnerArcDeg(): number | null {
+    const sp = this.scene().spinner;
+    return sp ? (sp.realSpin * this.settings.shutter * 180) / Math.PI : null;
   }
 
   /** Distance (dans l'image d'origine) du point visé, pour la mise au point au clic. */
@@ -1008,15 +1037,31 @@ export function buildApp(root: HTMLElement, language: Language): void {
       dialNodes[i].badge.classList.toggle('is-visible', !active);
       dialNodes[i].setValue();
     }
-    const { aperture, shutter } = sim.settings;
-    dialNodes[1].hint.textContent = aperture <= 2.8 ? copy.bokeh : copy.depth;
+    const { shutter, iso } = sim.settings;
+    const loc = language === 'fr' ? 'fr-FR' : 'en-US';
+    const num = (m: number) => m.toLocaleString(loc, { maximumFractionDigits: m < 10 ? 1 : 0 });
+
+    // ISO : niveau de grain.
+    dialNodes[0].hint.textContent = copy.grain[iso <= 200 ? 0 : iso <= 800 ? 1 : iso <= 3200 ? 2 : 3];
+
+    // Ouverture : zone nette réelle (profondeur de champ optique).
+    const dof = sim.dofRange();
+    dialNodes[1].hint.textContent = dof.far === Infinity ? copy.sharpToInf(`${num(dof.near)} m`) : copy.sharpRange(num(dof.near), `${num(dof.far)} m`);
     // Vitesse lente (≥ 1/30 s) : le mouvement laisse une traînée.
     const minHand = handheldMinShutter(sim.settings.focalLength);
     if (!sim.settings.tripod && shutter > minHand * 1.01) {
       // Règle du 1/focale : en dessous, risque de photo floue à main levée.
       dialNodes[2].hint.textContent = copy.handheld(formatShutterValue(minHand), sim.settings.focalLength);
     } else {
-      dialNodes[2].hint.textContent = shutter >= 1 / 30 ? copy.motionBlur : copy.frozen;
+      // Effet de la vitesse sur ce qui bouge dans la scène.
+      const parts: string[] = [];
+      const spin = sim.spinnerArcDeg();
+      if (spin !== null) parts.push(spin < 6 ? copy.spinFrozen : spin < 45 ? copy.spinSlight : spin < 300 ? copy.spinStrong : copy.spinDisc);
+      if (shutter >= 1) parts.push(copy.waterSilk);
+      else if (shutter >= 1 / 8) parts.push(copy.waterSmooth);
+      if (parts.length === 0) parts.push(shutter >= 1 / 30 ? copy.motionBlur : copy.frozen);
+      const text = parts.join(' · ');
+      dialNodes[2].hint.textContent = text.charAt(0).toUpperCase() + text.slice(1);
     }
   }
   function syncReadout(): void {
