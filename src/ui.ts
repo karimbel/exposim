@@ -16,7 +16,7 @@ import {
   type SimConfig,
   type SimSettings
 } from './camera/exposure';
-import { exposeLayer, motionAmount, postProcess, shakeAmount, shakeBlur } from './effects/post';
+import { exposeLayer, handheldMinShutter, motionAmount, postProcess, shakeBlur, shakeLengthPx } from './effects/post';
 import { blurRadius, drawSpinner, renderDepthOfField } from './effects/dof';
 import {
   croppedDisparity,
@@ -49,7 +49,8 @@ const COPY = {
     series: 'Série', tripod: 'Trépied (stabilise l’image)', capture: 'Déclencher', shortcut: 'ou appuyer sur Espace',
     save: 'Sauvegarder l’image', gallery: 'Photos prises', galleryHint: 'cliquez pour agrandir · ✕ pour supprimer',
     empty: 'Aucune photo pour le moment.', backLive: 'Revenir au direct',
-    bokeh: 'Effet bokeh marqué', depth: 'Profondeur de champ', motionBlur: 'Flou de filé et bougé possibles', frozen: 'Mouvement figé',
+    bokeh: 'Effet bokeh marqué', depth: 'Profondeur de champ', motionBlur: 'Flou de filé possible', frozen: 'Mouvement figé',
+    handheld: (min: string, focal: number) => `Risque de bougé : ${min} s mini à ${focal} mm`,
     program: 'L’appareil choisit le diaphragme et la vitesse.',
     aperturePriority: 'Vous choisissez l’ouverture ; l’appareil règle la vitesse.',
     shutterPriority: 'Vous choisissez la vitesse ; l’appareil règle l’ouverture.',
@@ -64,6 +65,7 @@ const COPY = {
     save: 'Save image', gallery: 'Captured photos', galleryHint: 'click to enlarge · ✕ to delete',
     empty: 'No photos yet.', backLive: 'Return to live view',
     bokeh: 'Strong bokeh effect', depth: 'Depth of field', motionBlur: 'Motion blur possible', frozen: 'Motion frozen',
+    handheld: (min: string, focal: number) => `Camera shake risk: ${min} s min. at ${focal} mm`,
     program: 'The camera selects aperture and shutter speed.',
     aperturePriority: 'You select the aperture; the camera sets shutter speed.',
     shutterPriority: 'You select shutter speed; the camera sets the aperture.',
@@ -364,8 +366,7 @@ export class Simulator {
     ctx.drawImage(still.image, 0, 0);
     const pose = this.spinnerPose(elapsed);
     if (pose && still.spinner) drawSpinner(ctx, still.spinner, pose.cx, pose.cy, pose.size, pose.rotation, pose.arc);
-    const shake = shakeAmount(s.shutter, s.tripod);
-    const final = shake > 0.02 ? shakeBlur(out, shake) : out;
+    const final = shakeBlur(out, shakeLengthPx(s.shutter, s.focalLength, s.tripod));
     this.lastShot = final;
     return final;
   }
@@ -896,14 +897,15 @@ export function buildApp(root: HTMLElement, language: Language): void {
   let shakeLogged = false;
   function simulateLiveDraw(elapsed: number): void {
     drawCanvas(sim.renderPreview(elapsed));
-    const shake = shakeAmount(sim.settings.shutter, sim.settings.tripod);
-    if (shake > 0.02) {
-      // Le tremblement se voit dans le viseur, tandis que le collimateur reste fixe.
-      const amplitude = 1 + shake * 7;
-      const x = Math.sin(elapsed * 0.0045) * amplitude + Math.sin(elapsed * 0.008) * amplitude * 0.28;
-      const y = Math.cos(elapsed * 0.0055) * amplitude * 0.68;
-      if (!shakeLogged) { shakeLogged = true; journal('viseur-tremblement', { actif: true, intensite: +shake.toFixed(2), zoom: 1.04 }); }
-      view.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) scale(1.04)`;
+    if (!sim.settings.tripod) {
+      // À main levée, la main tremble en permanence : le viseur bouge
+      // doucement, d'autant plus qu'on zoome. La vitesse ne change que ce
+      // qui s'imprime sur la photo.
+      const amplitude = 0.5 + 0.9 * (sim.settings.focalLength / 24);
+      const x = Math.sin(elapsed * 0.0021) * amplitude + Math.sin(elapsed * 0.0057 + 1.3) * amplitude * 0.35;
+      const y = Math.cos(elapsed * 0.0017) * amplitude * 0.7 + Math.sin(elapsed * 0.0049) * amplitude * 0.25;
+      if (!shakeLogged) { shakeLogged = true; journal('viseur-tremblement', { actif: true, amplitudePx: +amplitude.toFixed(2) }); }
+      view.style.transform = `translate(${x.toFixed(2)}px, ${y.toFixed(2)}px) scale(1.025)`;
     } else {
       if (shakeLogged) { shakeLogged = false; journal('viseur-tremblement', { actif: false }); }
       view.style.transform = '';
@@ -975,6 +977,7 @@ export function buildApp(root: HTMLElement, language: Language): void {
         trepied: s.tripod, miseAuPoint: s.focusDistance === null ? 'sujet' : +s.focusDistance.toFixed(2)
       },
       ecartIL: +sim.analysis().toFixed(2),
+      bougePx: +shakeLengthPx(s.shutter, s.focalLength, s.tripod).toFixed(1),
       message: log.textContent,
       viseur: { largeur: Math.round(r.width), hauteur: Math.round(r.height), transform: view.style.transform || 'aucune' },
       fenetre: [window.innerWidth, window.innerHeight],
@@ -1002,7 +1005,13 @@ export function buildApp(root: HTMLElement, language: Language): void {
     const { aperture, shutter } = sim.settings;
     dialNodes[1].hint.textContent = aperture <= 2.8 ? copy.bokeh : copy.depth;
     // Vitesse lente (≥ 1/30 s) : le mouvement laisse une traînée.
-    dialNodes[2].hint.textContent = shutter >= 1 / 30 ? copy.motionBlur : copy.frozen;
+    const minHand = handheldMinShutter(sim.settings.focalLength);
+    if (!sim.settings.tripod && shutter > minHand * 1.01) {
+      // Règle du 1/focale : en dessous, risque de photo floue à main levée.
+      dialNodes[2].hint.textContent = copy.handheld(formatShutterValue(minHand), sim.settings.focalLength);
+    } else {
+      dialNodes[2].hint.textContent = shutter >= 1 / 30 ? copy.motionBlur : copy.frozen;
+    }
   }
   function syncReadout(): void {
     const { aperture, shutter, iso } = sim.settings;
