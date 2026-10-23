@@ -163,15 +163,33 @@ export interface AnimPose {
   pivotY?: number;
   /** Angle de rotation du sprite (rad) au temps t. */
   rotation: number;
+  /** Vitesse de rotation (rad/s) : sert au flou de filé pendant la pose. */
+  spinRate: number;
+}
+
+/**
+ * Recadrage optique en fractions de l'image maître (0..1), identique à
+ * `focalCropDraw` : permet de placer un sprite exactement sur le décor.
+ */
+function frameCropFrac(width: number, height: number, effectiveFocal: number): { x: number; y: number; w: number; h: number } {
+  const ref = cache.get(DEFAULT_BACKGROUND);
+  const iw = ref?.naturalWidth || 1536;
+  const ih = ref?.naturalHeight || 1024;
+  let srcW = clamp((iw * REF_FOCAL_MM) / effectiveFocal, iw / 8, iw);
+  let srcH = (srcW * height) / width;
+  if (srcH > ih) {
+    srcH = ih;
+    srcW = (srcH * width) / height;
+  }
+  return { x: (iw - srcW) / 2 / iw, y: (ih - srcH) / 2 / ih, w: srcW / iw, h: srcH / ih };
 }
 
 /** Position de l'élément animé dans le cadre à l'instant t (fraction du cadre → px). */
 export function animPose(elapsed: number, width: number, height: number, focal: number, distance: number, shutter: number): AnimPose {
   const cfg = SCENE_LAYERS.find((c) => c.key === 'mid');
   const img = cfg ? layerCanvas(cfg) : null;
-  if (!cfg || !img) return { x: -1e4, y: -1e4, w: 0, h: 0, sx: 0, sy: 0, rotation: 0 };
+  if (!cfg || !img) return { x: -1e4, y: -1e4, w: 0, h: 0, sx: 0, sy: 0, rotation: 0, spinRate: 0 };
   const elapsedSec = elapsed / 1000;
-  const zoom = focal / REF_FOCAL_MM;
   // Une vitesse lente laisse le temps au sujet de tourner davantage ; une
   // vitesse rapide le fige presque. L'échelle logarithmique suit les crans
   // photographiques : +1 IL double approximativement la rotation.
@@ -202,7 +220,8 @@ export function animPose(elapsed: number, width: number, height: number, focal: 
       sy: img.height,
       pivotX: ((cfg.anchorX * img.width - srcX) / srcW) * width,
       pivotY: ((cfg.anchorY * img.height - srcY) / srcH) * height,
-      rotation: spin === 0 ? 0 : (spin * elapsedSec) % (Math.PI * 2)
+      rotation: spin === 0 ? 0 : (spin * elapsedSec) % (Math.PI * 2),
+      spinRate: spin
     };
   }
   let ax = cfg.anchorX;
@@ -214,22 +233,47 @@ export function animPose(elapsed: number, width: number, height: number, focal: 
     ay = cfg.anchorY + bob * Math.sin((elapsedSec / period) * Math.PI * 2);
   }
   const rotation = spin === 0 ? 0 : (spin * elapsedSec) % (Math.PI * 2);
-  const drawW = cfg.widthFrac * zoom * width;
-  const drawH = drawW * (img.width / img.height);
+  // Ancre et largeur en fractions de l'image maître, puis même recadrage que
+  // le décor et le sujet : le sprite reste à sa place à toutes les focales.
+  const crop = frameCropFrac(width, height, focal * (1 + (5 - distance) * 0.08));
+  const drawW = (cfg.widthFrac / crop.w) * width;
+  const drawH = drawW * (img.height / img.width);
+  const cx = ((ax - crop.x) / crop.w) * width;
+  const cy = ((ay - crop.y) / crop.h) * height;
   return {
-    x: ax * width - drawW / 2,
-    y: ay * height - drawH / 2,
+    x: cx - drawW / 2,
+    y: cy - drawH / 2,
     w: drawW,
     h: drawH,
     sx: img.width,
     sy: img.height,
-    rotation
+    rotation,
+    spinRate: spin
   };
 }
 
-/** Dessine le sprite animé (rotation éventuelle autour de son centre). */
-export function drawAnimatedSprite(ctx: CanvasRenderingContext2D, pose: AnimPose, sprite: HTMLCanvasElement): void {
+/**
+ * Dessine le sprite animé. `exposureSec` > 0 simule la pose : le sprite est
+ * accumulé sur l'angle parcouru pendant l'ouverture de l'obturateur (filé).
+ */
+export function drawAnimatedSprite(ctx: CanvasRenderingContext2D, pose: AnimPose, sprite: HTMLCanvasElement, exposureSec = 0): void {
   if (pose.w <= 0 || pose.h <= 0) return;
+  const arc = Math.min(Math.abs(pose.spinRate * exposureSec), Math.PI * 2);
+  if (arc > 0.02) {
+    const steps = clamp(Math.ceil(arc / 0.05), 2, 48);
+    // Moyenne exacte des positions (mode additif) : le flou est fidèle, sans
+    // rendre le moulinet artificiellement transparent.
+    const acc = makeCanvas(ctx.canvas.width, ctx.canvas.height);
+    const accCtx = ctx2d(acc);
+    accCtx.globalCompositeOperation = 'lighter';
+    accCtx.globalAlpha = 1 / steps;
+    for (let i = 0; i < steps; i++) {
+      const rotation = pose.rotation + (arc * i) / (steps - 1);
+      drawAnimatedSprite(accCtx, { ...pose, rotation }, sprite);
+    }
+    ctx.drawImage(acc, 0, 0);
+    return;
+  }
   if (pose.rotation === 0) {
     ctx.drawImage(sprite, pose.x, pose.y, pose.w, pose.h);
     return;
@@ -307,7 +351,8 @@ export function renderSceneLayers(opts: LayerRenderOptions, animateMid: boolean)
         focalCropDraw(ctx2d(base), animImg, width, height, distanceFocal);
         drawAnimatedSprite(ctx2d(mid), pose, base);
       } else {
-        drawAnimatedSprite(ctx2d(mid), pose, animImg);
+        // Prise de vue : le moulinet tourne pendant la pose → filé.
+        drawAnimatedSprite(ctx2d(mid), pose, animImg, shutter);
       }
     }
   }

@@ -332,6 +332,11 @@ function applyExposure(img: HTMLCanvasElement, exposure: number, temperatureK: n
   return out;
 }
 
+/** Exposition et couleur seules, pour un calque superposé au viseur (élément animé). */
+export function exposeLayer(img: HTMLCanvasElement, exposure: number, temperatureK: number): HTMLCanvasElement {
+  return applyExposure(img, exposure, temperatureK);
+}
+
 function addGrain(img: HTMLCanvasElement, iso: number): HTMLCanvasElement {
   const amp = clamp(Math.sqrt(iso / 100) * 14 - 12, 0, 34);
   if (amp < 0.5) return img;

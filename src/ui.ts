@@ -16,7 +16,7 @@ import {
   type SimConfig,
   type SimSettings
 } from './camera/exposure';
-import { computeBlurRadii, compositeScene, motionAmount, postProcess, shakeAmount } from './effects/post';
+import { computeBlurRadii, compositeScene, exposeLayer, motionAmount, postProcess, shakeAmount } from './effects/post';
 import { animPose, bakeAnimatedSprite, drawAnimatedSprite, loadSceneImages } from './scene/images';
 import { makeCanvas } from './scene/objects';
 import { renderScene, type SceneLayers } from './scene/world';
@@ -229,9 +229,14 @@ export class Simulator {
       this.liveKey = key;
     }
 
-    const bakeKey = `${s.focalLength}|${s.distance.toFixed(2)}`;
+    // Le moulinet est superposé en direct : il reçoit le même flou de
+    // profondeur, la même exposition et la même couleur que le reste du viseur.
+    const bakeKey = key;
     if (this.bakeKey !== bakeKey) {
-      this.bakedAnim = bakeAnimatedSprite(elapsed, SCENE_W, SCENE_H, s.focalLength, s.distance, 0, s.shutter);
+      const sprite = bakeAnimatedSprite(elapsed, SCENE_W, SCENE_H, s.focalLength, s.distance, computeBlurRadii(layers).mid, s.shutter);
+      this.bakedAnim = sprite
+        ? exposeLayer(sprite, exposureRatio(s.aperture, s.shutter, s.iso, s.lighting), s.temperatureK)
+        : null;
       this.bakeKey = bakeKey;
     }
     if (!this.bakedAnim) return this.liveCanvas;
@@ -807,12 +812,12 @@ export function buildApp(root: HTMLElement, language: Language): void {
       const shot = shots[i];
       const card = el('div', 'shot');
       if (shot === selectedShot) card.classList.add('shot--active');
+      // Vignette au format 3:2 de la photo (aucun recadrage), en double
+      // définition pour rester nette sur les écrans haute densité.
       const thumb = document.createElement('canvas');
-      thumb.width = 220;
-      thumb.height = 100;
-      const srcHeight = (SCENE_W * thumb.height) / thumb.width;
-      const srcY = (SCENE_H - srcHeight) / 2;
-      thumb.getContext('2d')!.drawImage(shot.canvas, 0, srcY, SCENE_W, srcHeight, 0, 0, thumb.width, thumb.height);
+      thumb.width = 264;
+      thumb.height = 176;
+      thumb.getContext('2d')!.drawImage(shot.canvas, 0, 0, thumb.width, thumb.height);
       const meta = el('div', 'shot__meta', `#${i + 1}`);
       const del = el('button', 'shot__del', '✕');
       del.type = 'button';

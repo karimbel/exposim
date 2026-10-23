@@ -582,6 +582,10 @@ html, body {
   gap: 10px;
   overflow-x: auto;
   padding-bottom: 4px;
+  /* Hauteur réservée d'une vignette : le viseur ne rétrécit pas à la
+     première prise de vue. */
+  min-height: 96px;
+  box-sizing: border-box;
 }
 
 .gallery__empty {
@@ -603,13 +607,19 @@ html, body {
 .shot:hover { border-color: var(--text-faint); }
 .shot--active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 
-.shot canvas { display: block; width: 220px; height: 100px; }
+.shot canvas { display: block; width: 132px; height: 88px; }
 
 .shot__meta {
+  /* Numéro posé sur la vignette : la galerie reste basse. */
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
   font-family: var(--mono);
   font-size: 11px;
-  color: var(--text-dim);
-  padding: 4px 8px 6px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 4px;
+  padding: 1px 5px;
 }
 
 .shot__del {
@@ -927,7 +937,8 @@ input[type="range"]::-moz-range-thumb {
   .panel__section { min-width: 0; }
   .gallery { padding: 10px; }
   .gallery__head { align-items: flex-start; flex-direction: column; gap: 3px; }
-  .shot canvas { width: 160px; height: 74px; }
+  .shot canvas { width: 108px; height: 72px; }
+  .gallery__strip { min-height: 80px; }
   .vf-bottom { bottom: 8px; gap: 6px; }
   .vf-side { padding: 3px 6px; font-size: 11px; }
   .vf-histogram { top: 20px; right: 16px; width: 96px; height: 33px; }

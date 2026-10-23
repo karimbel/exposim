@@ -75,16 +75,16 @@ export const SCENE_LAYERS: SceneLayerConfig[] = [
   },
   {
     key: 'mid',
-    // En attente des calques définitifs du diorama.
-    file: '',
-    // Calque plein cadre transparent : les pales tournent autour du moyeu,
-    // sans déplacer la cage ou le petit meuble.
-    method: 'cover',
-    anchorX: 0.246,
-    anchorY: 0.419,
-    widthFrac: 1,
-    depthM: 3,
-    approxWidthM: 0.35,
+    // Moulinet tenu par la petite fille (version en ligne du 20 septembre).
+    file: `${SCENE_IMG_BASE}/anim.png`,
+    // Sprite : position et taille exprimées en fractions de l'image maître
+    // (cadrage 24 mm à 5 m) ; il suit donc la focale et la distance.
+    method: 'sprite',
+    anchorX: 0.65,
+    anchorY: 0.64,
+    widthFrac: 0.053,
+    depthM: 5,
+    approxWidthM: 0.45,
     // La vitesse réelle est modulée par la vitesse d'obturation choisie.
     spinRadsPerSec: 2.2
   },
@@ -105,8 +105,12 @@ export const SCENE_LAYERS: SceneLayerConfig[] = [
     method: 'cover',
     anchorX: 0.5,
     anchorY: 0.5,
-    focusYFrac: 0.54,
-    feetYFrac: 0.91,
+    // Échelle et position de la famille dans le décor (version du 20 septembre).
+    frameScale: 0.7,
+    frameOffsetXFrac: 0.142,
+    frameOffsetYFrac: 0.2,
+    focusYFrac: 0.12,
+    feetYFrac: 0.95,
     frameScaleAnchorXFrac: 0.5,
     frameScaleAnchorYFrac: 0.5,
     widthFrac: 1,
