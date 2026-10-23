@@ -48,7 +48,7 @@ const COPY = {
     tagline: 'Simulateur photographique — la scène, notre image.',
     scene: 'Lumière de la scène', light: 'Luminosité', temperature: 'Balance des blancs',
     lens: 'Objectif', distance: 'Distance au sujet', focal: 'Focale (zoom)',
-    series: 'Série', tripod: 'Trépied (stabilise l’image)', capture: 'Déclencher', shortcut: 'ou appuyer sur Espace',
+    series: 'Série', tripod: 'Trépied (stabilise l’image)', highlights: 'Alerte hautes lumières', capture: 'Déclencher', shortcut: 'ou appuyer sur Espace',
     save: 'Sauvegarder l’image', gallery: 'Photos prises', galleryHint: 'cliquez pour agrandir · ✕ pour supprimer',
     empty: 'Aucune photo pour le moment.', backLive: 'Revenir au direct',
     bokeh: 'Effet bokeh marqué', depth: 'Profondeur de champ', motionBlur: 'Flou de filé possible', frozen: 'Mouvement figé',
@@ -67,7 +67,7 @@ const COPY = {
     tagline: 'Photography simulator — the scene, our image.',
     scene: 'Scene light', light: 'Brightness', temperature: 'White balance',
     lens: 'Lens', distance: 'Subject distance', focal: 'Focal length (zoom)',
-    series: 'Series', tripod: 'Tripod (stabilizes the image)', capture: 'Capture', shortcut: 'or press Space',
+    series: 'Series', tripod: 'Tripod (stabilizes the image)', highlights: 'Highlight alert', capture: 'Capture', shortcut: 'or press Space',
     save: 'Save image', gallery: 'Captured photos', galleryHint: 'click to enlarge · ✕ to delete',
     empty: 'No photos yet.', backLive: 'Return to live view',
     bokeh: 'Strong bokeh effect', depth: 'Depth of field', motionBlur: 'Motion blur possible', frozen: 'Motion frozen',
@@ -357,6 +357,11 @@ export class Simulator {
   }
 
   lastRenderMs = 0;
+
+  /** Dernier rendu du viseur sans l'objet animé (sert à l'alerte de hautes lumières). */
+  stillCanvas(): HTMLCanvasElement | null {
+    return this.liveCanvas;
+  }
 
   /** État interne utile au diagnostic (journal). */
   debugInfo(): Record<string, unknown> {
@@ -817,6 +822,16 @@ export function buildApp(root: HTMLElement, language: Language): void {
   tripodRow.append(tripodCheck, el('span', 'control__label', copy.tripod));
   tripodCheck.addEventListener('change', () => sim.setTripod(tripodCheck.checked));
   serSec.append(tripodRow);
+  // Alerte de hautes lumières : les zones brûlées clignotent en noir,
+  // dans le viseur comme sur les photos prises.
+  const hiRow = el('label', 'control control--tripod');
+  const hiCheck = document.createElement('input');
+  hiCheck.type = 'checkbox';
+  hiCheck.id = 'highlights';
+  hiCheck.checked = true;
+  hiRow.append(hiCheck, el('span', 'control__label', copy.highlights));
+  hiCheck.addEventListener('change', () => journal('alerte-hautes-lumieres', { active: hiCheck.checked }));
+  serSec.append(hiRow);
   panel.append(serSec);
 
   const captureAction = el('div', 'panel__action panel__action--capture');
@@ -901,10 +916,45 @@ export function buildApp(root: HTMLElement, language: Language): void {
     hctx.stroke();
   }
 
-  function drawCanvas(c: HTMLCanvasElement): void {
+  /** Zones brûlées (au moins un canal saturé), mémoïsées par image source. */
+  let clipSource: HTMLCanvasElement | null = null;
+  let clipMask: HTMLCanvasElement | null = null;
+  function clippedMask(src: HTMLCanvasElement): HTMLCanvasElement | null {
+    if (clipSource === src) return clipMask;
+    clipSource = src;
+    // Analyse à 1/3 de résolution : le moyennage efface le grain, sinon le
+    // masque serait un semis de points au lieu de zones nettes.
+    const sw = Math.max(1, Math.round(src.width / 3));
+    const sh = Math.max(1, Math.round(src.height / 3));
+    const small = makeCanvas(sw, sh);
+    const sctx = small.getContext('2d')!;
+    sctx.imageSmoothingQuality = 'high';
+    sctx.drawImage(src, 0, 0, sw, sh);
+    const data = sctx.getImageData(0, 0, sw, sh);
+    const d = data.data;
+    let count = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      const clipped = Math.max(d[i], d[i + 1], d[i + 2]) >= 247;
+      d[i] = 0; d[i + 1] = 0; d[i + 2] = 0;
+      d[i + 3] = clipped ? 235 : 0;
+      if (clipped) count++;
+    }
+    // Quelques pixels isolés (reflets ponctuels) ne déclenchent pas l'alerte.
+    if (count < (d.length / 4) * 0.0004) { clipMask = null; return null; }
+    sctx.putImageData(data, 0, 0);
+    clipMask = small;
+    return clipMask;
+  }
+
+  function drawCanvas(c: HTMLCanvasElement, still: HTMLCanvasElement = c): void {
     shownCanvas = c;
     ctx.drawImage(c, 0, 0);
     drawHistogram(c);
+    // Clignotement (≈ 3 fois par seconde), comme à la relecture sur un appareil.
+    if (hiCheck.checked && Math.floor(performance.now() / 330) % 2 === 0) {
+      const mask = clippedMask(still);
+      if (mask) ctx.drawImage(mask, 0, 0, c.width, c.height);
+    }
   }
 
   function openLightbox(shot: Shot): void {
@@ -924,14 +974,18 @@ export function buildApp(root: HTMLElement, language: Language): void {
   });
 
   function paint(elapsed: number): void {
-    if (selectedShot) return;
+    if (selectedShot) {
+      // Photo affichée : on la redessine pour faire clignoter l'alerte.
+      if (hiCheck.checked) drawCanvas(selectedShot.canvas);
+      return;
+    }
     if (elapsed < freezeUntil) return;
     simulateLiveDraw(elapsed);
   }
 
   let shakeLogged = false;
   function simulateLiveDraw(elapsed: number): void {
-    drawCanvas(sim.renderPreview(elapsed));
+    drawCanvas(sim.renderPreview(elapsed), sim.stillCanvas() ?? undefined);
     if (!sim.settings.tripod) {
       // À main levée, la main tremble en permanence : le viseur bouge
       // doucement, d'autant plus qu'on zoome. La vitesse ne change que ce
