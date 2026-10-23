@@ -148,7 +148,7 @@ export class Simulator {
     this.settings.focusY = clamp(y, 0.04, 0.96);
     // Distance réelle du point visé, lue dans la carte de profondeur.
     this.settings.focusDistance = onSubject ? null : clamp(this.depthAt(x, y), 0.3, 1000);
-    // Le point visé devient le centre du zoom, sans déplacer l'image.
+    // Le point visé devient le centre du zoom.
     const c = this.photoFrame().crop;
     this.afPoint = { ix: c.x + x * c.w, iy: c.y + y * c.h, sx: x, sy: y };
     this.emitChange();

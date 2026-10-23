@@ -125,10 +125,10 @@ export function photoCrop(focal: number, distance: number, aspect: number, imgAs
   let w = clamp(PHOTO_REF_FOCAL / eff, 1 / 8, 1);
   let h = (w * imgAspect) / aspect;
   if (h > 1) { h = 1; w = aspect / imgAspect; }
-  // Zoom autour du point de mise au point : il garde sa place dans le
-  // viseur (dans la limite des bords de l'image).
-  const x = clamp(anchor.ix - anchor.sx * w, 0, 1 - w);
-  const y = clamp(anchor.iy - anchor.sy * h, 0, 1 - h);
+  // Le cadrage zoomé est centré sur le point de mise au point, dans la
+  // limite des bords de l'image (au 24 mm, l'image entière est visible).
+  const x = clamp(anchor.ix - w / 2, 0, 1 - w);
+  const y = clamp(anchor.iy - h / 2, 0, 1 - h);
   return { x, y, w, h };
 }
 
