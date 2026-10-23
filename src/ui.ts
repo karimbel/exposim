@@ -18,8 +18,10 @@ import {
 } from './camera/exposure';
 import { exposeLayer, handheldMinShutter, motionAmount, postProcess, shakeBlur, shakeLengthPx } from './effects/post';
 import { blurRadius, drawSpinner, renderDepthOfField } from './effects/dof';
+import { smoothWater } from './effects/water';
 import {
   croppedDisparity,
+  croppedMask,
   drawCropped,
   loadPhotoScenes,
   photoCrop,
@@ -215,7 +217,7 @@ export class Simulator {
   /* ------------------------- scène photo + profondeur ------------------------ */
 
   private frameKey = '';
-  private frame: { plate: HTMLCanvasElement; disp: Float32Array; crop: Crop; spinner: HTMLCanvasElement | null } | null = null;
+  private frame: { plate: HTMLCanvasElement; disp: Float32Array; crop: Crop; spinner: HTMLCanvasElement | null; water: HTMLCanvasElement | null } | null = null;
   private liveKey = '';
   private liveCanvas: HTMLCanvasElement | null = null;
   private spinnerKey = '';
@@ -251,7 +253,9 @@ export class Simulator {
         spinner = makeCanvas(spriteImg.width, spriteImg.height);
         spinner.getContext('2d')!.drawImage(spriteImg, 0, 0);
       }
-      this.frame = { plate, disp, crop, spinner };
+      const waterImg = scene.water ? photoImage(scene.water) : null;
+      const water = waterImg ? croppedMask(waterImg, crop, SCENE_W, SCENE_H) : null;
+      this.frame = { plate, disp, crop, spinner, water };
       this.frameKey = key;
     }
     return this.frame;
@@ -298,7 +302,9 @@ export class Simulator {
     const f = this.photoFrame();
     const focusDisp = this.focusDisp();
     const t0 = performance.now();
-    const sharp = renderDepthOfField(f.plate, f.disp, focusDisp, s.aperture, s.focalLength);
+    // Pose longue : l'eau se lisse avant le calcul du flou de profondeur.
+    const plate = f.water ? smoothWater(f.plate, f.water, s.shutter) : f.plate;
+    const sharp = renderDepthOfField(plate, f.disp, focusDisp, s.aperture, s.focalLength);
     const exposure = exposureRatio(s.aperture, s.shutter, s.iso, s.lighting);
     const referenceK = this.scene().nativeK;
     const image = postProcess(sharp, { exposure, iso: s.iso, temperatureK: s.temperatureK, referenceK, shakeAmount: 0, motionAmount: motion });
